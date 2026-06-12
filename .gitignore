@@ -1,3 +1,6 @@
+# --- Internal build spec / prompt (not part of the public project) ---
+PROJECT_BUILD*.md
+
 # ---------------------------------------------------------------------------
 # Raw Freddie Mac data — redistribution is restricted. NEVER commit it.
 # ---------------------------------------------------------------------------
