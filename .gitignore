@@ -1,0 +1,23 @@
+# ---------------------------------------------------------------------------
+# Raw Freddie Mac data — redistribution is restricted. NEVER commit it.
+# ---------------------------------------------------------------------------
+raw data/
+*.txt
+
+# Derived loan-level data (the cached panel is still loan-level Freddie data)
+data/processed/
+*.parquet
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

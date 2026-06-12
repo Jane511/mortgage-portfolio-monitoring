@@ -1,0 +1,8 @@
+roll_rate,monthly_probability
+Current -> 30 (new delinquency),0.0099
+30 -> 60 (roll worse),0.2054
+60 -> 90+ (roll worse),0.3774
+90+ -> Default (roll to credit event),0.0269
+30 -> Current (cure),0.3282
+60 -> Current/30 (cure),0.2523
+Current -> Prepaid (voluntary exit),0.0149

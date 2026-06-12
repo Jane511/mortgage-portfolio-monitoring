@@ -1,0 +1,13 @@
+move,loan_months,share
+1 -> 1  stay performing,8124369,0.9198
+3 -> 3  stay defaulted,250832,0.0284
+2 -> 2  stay watch,145608,0.0165
+1 -> exit (prepaid),124177,0.0141
+1 -> 2  deteriorate (SICR),83246,0.0094
+2 -> 1  cure,63194,0.0072
+2 -> 3  deteriorate (default),23073,0.0026
+3 -> 1  cure,10873,0.0012
+3 -> 2  partial cure,4645,0.0005
+2 -> exit (prepaid),899,0.0001
+3 -> exit (prepaid),807,0.0001
+1 -> 3  deteriorate (default),632,0.0001

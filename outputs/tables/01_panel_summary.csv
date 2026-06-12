@@ -1,0 +1,4 @@
+vintage,loans,loan_months,avg_months_observed,current_share,ever_default_share
+2007,50000,3003932,225,0.903,0.1647
+2008,50000,2449679,212,0.9347,0.093
+2015,50000,3396519,128,0.9851,0.0406
