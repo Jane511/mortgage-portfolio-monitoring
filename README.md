@@ -25,6 +25,37 @@ which is what every transition and migration measure is built from.
 
 ---
 
+## Key charts
+
+*All charts are regenerated from the committed result tables in [outputs/tables/](outputs/tables/)
+by [reports/make_figures.py](reports/make_figures.py) — aggregated transition metrics only, no raw loan records.*
+
+### 1. Monthly transition matrix (the headline)
+![Heatmap of the monthly delinquency-bucket transition matrix](reports/figures/transition_matrix_heatmap.png)
+
+**What this shows:** of the loans in each row's state this month, the share in each column's state next month (each row sums to 1).
+**Why it matters:** it is the whole monitor in one picture — the bright diagonal is "stayed put", and you can read straight off it that a 60-days-late loan has a ~38% chance of rolling to 90+ next month.
+
+### 2. Roll rates — deterioration vs cure
+![Roll rates bar chart, deterioration in red and cure in blue](reports/figures/roll_rates.png)
+
+**What this shows:** the monthly chance of the key worse-bucket moves (red) and recovery moves (blue).
+**Why it matters:** these are the dials an early-warning process tracks — a rising 30→60 roll rate is the first sign a book is turning before defaults show up.
+
+### 3. IFRS 9 stage mix by vintage
+![Stacked bar of IFRS 9 stage 1/2/3 share for the 2007, 2008 and 2015 vintages](reports/figures/stage_mix_by_vintage.png)
+
+**What this shows:** the share of loan-months in IFRS 9 Stage 1 (performing), Stage 2 (watch) and Stage 3 (default) for each vintage.
+**Why it matters:** the crisis 2007 book carries ~10% of its life in Stage 2/3 versus ~1.5% for calm 2015 — the staging that drives loss provisions, split by cohort.
+
+### 4. Vintage tracking — downturn vs calm
+![Cumulative default by months on book for 2007, 2008 and 2015 vintages](reports/figures/vintage_default_curves.png)
+
+**What this shows:** cumulative default rate as each cohort ages, on a common "months on book" clock.
+**Why it matters:** the 2007 cohort reaches ~4× the cumulative default of 2015 — the clearest demonstration of why vintage monitoring matters.
+
+---
+
 ## For a non-technical reader: what is this, and why does it matter?
 
 Once a bank has lent money, it has to keep *watching* the loans — not just the ones
