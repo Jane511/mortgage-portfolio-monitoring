@@ -1,0 +1,111 @@
+# =====================================================================
+# Risk appetite statement + cascaded limit framework
+# ---------------------------------------------------------------------
+# APS 220 para 20 (a risk appetite statement sets appetite, tolerance,
+# monitoring and the action on a breach) and para 35 (limits on higher-risk
+# borrowers/products, including industry and GEOGRAPHY). Monitoring without
+# limits is just reporting — these thresholds are what turn the metrics in
+# this repo into a monitoring PROGRAMME.
+#
+# Thresholds live HERE (not hard-coded in the notebooks) so a risk owner can
+# change appetite without touching the engine. Each metric the panel can
+# actually compute carries: an amber (early-warning) and a red (limit) level,
+# the owner accountable for it, the action taken on a breach, the review cycle,
+# whether it is a LEADING or LAGGING indicator (APG 220 para 66), and the rule
+# it traces to.
+#
+# Illustrative demo thresholds — NOT a regulatory submission and NOT a real
+# institution's appetite. Levels are set to plausible mortgage-book values, not
+# fitted to this sample (which pools crisis 2007/08 with calm 2015 vintages).
+# =====================================================================
+
+# Limit cascade (stated in words; APS 220 para 35 — appetite cascades down):
+#   Board appetite  ->  portfolio limits (this file)
+#   portfolio       ->  segment sub-limits (e.g. per vintage / per state)
+#   segment         ->  facility-level controls (origination policy, max LVR)
+cascade:
+  - "Board: approves the risk appetite statement and the portfolio limits below."
+  - "Portfolio: CRO/credit risk monitors these limits monthly; breaches escalate to the Board Risk Committee."
+  - "Segment: vintage and state sub-limits inherit from the portfolio limits."
+  - "Facility: origination policy (max LVR, min score) enforces appetite at the loan level."
+
+metrics:
+  npl_ratio:
+    label: "NPL ratio (Stage 3 / 90+ share of EAD)"
+    amber: 2.0
+    red: 4.0
+    higher_is_worse: true
+    indicator_type: lagging
+    owner: "Head of Credit Risk"
+    breach_action: "Review provisioning adequacy; deep-dive worst segment; report to Board Risk Committee."
+    review_cycle: "Monthly"
+    citation: "APS 220 para 30 (asset quality) / IFRS 9 Stage 3"
+  stage2_share:
+    label: "Stage 2 share of EAD (SICR watch book)"
+    amber: 5.0
+    red: 8.0
+    higher_is_worse: true
+    indicator_type: leading
+    owner: "Head of Credit Risk"
+    breach_action: "Investigate SICR drivers; confirm staging/ECL; tighten watchlist cadence."
+    review_cycle: "Monthly"
+    citation: "APS 220 para 30 / IFRS 9 SICR"
+  high_lvr_share:
+    label: "High-LVR book share (original LVR > 90% of EAD)"
+    amber: 15.0
+    red: 25.0
+    higher_is_worse: true
+    indicator_type: leading
+    owner: "Head of Mortgage Lending"
+    breach_action: "Tighten origination LVR policy; review LMI coverage; report concentration to Board."
+    review_cycle: "Quarterly"
+    citation: "APS 220 para 35 (higher-risk products)"
+  top_state_share:
+    label: "Geographic concentration (top-state exposure share)"
+    amber: 20.0
+    red: 30.0
+    higher_is_worse: true
+    indicator_type: lagging
+    owner: "Head of Credit Risk"
+    breach_action: "Review geographic limit; assess regional stress; consider new-business steering."
+    review_cycle: "Quarterly"
+    citation: "APS 220 para 35 (geographic concentration)"
+  geo_hhi:
+    label: "Geographic concentration (state HHI, 0-10,000)"
+    amber: 1500
+    red: 2500
+    higher_is_worse: true
+    indicator_type: lagging
+    owner: "Head of Credit Risk"
+    breach_action: "Review geographic diversification; set/refresh state sub-limits."
+    review_cycle: "Quarterly"
+    citation: "APS 220 para 35 (concentration)"
+  roll_30_60:
+    label: "30->60 roll rate (trailing 12m)"
+    amber: 20.0
+    red: 30.0
+    higher_is_worse: true
+    indicator_type: leading
+    owner: "Head of Collections"
+    breach_action: "Scale collections capacity; root-cause the deteriorating cohort; refresh roll-rate forecast."
+    review_cycle: "Monthly"
+    citation: "APG 220 para 66 (forward-looking indicators)"
+  roll_current_30:
+    label: "New-delinquency roll (Current->30, trailing 12m)"
+    amber: 1.0
+    red: 2.0
+    higher_is_worse: true
+    indicator_type: leading
+    owner: "Head of Collections"
+    breach_action: "Early-stage collections review; check recent origination quality; alert credit policy."
+    review_cycle: "Monthly"
+    citation: "APG 220 para 66 (forward-looking indicators)"
+
+# Downturn multiplier for the stress->limits link (MON-7 / APS 220 para 73).
+# Reuses the sister model's crisis severity: the 2007 cohort reaches ~4x the
+# cumulative default of the calm 2015 cohort, so a 3x stress on the flow/quality
+# metrics is a conservative-but-grounded downturn proxy.
+stress:
+  downturn_multiplier: 3.0
+  applies_to: [npl_ratio, stage2_share, roll_30_60, roll_current_30]
+  note: "Grounded in this repo's own vintage curves: 2007 cumulative default ~4x 2015 at 72 months on book."

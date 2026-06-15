@@ -70,6 +70,7 @@ SVCG_USE = {
     3: "dlq_status",    # months past due as text: "0","1","2",... ; "RA" REO acq; "XX" unknown
     4: "loan_age",      # months on book
     5: "rem_months",    # remaining months to maturity
+    7: "mod_flag",      # loss-mitigation modification flag: "Y" modified / "P" payment deferral / blank none
     8: "zb_code",       # zero-balance (termination) code — see ZB_* below
 }
 
@@ -116,6 +117,23 @@ ZB_LABEL = {
     "16": "Reperforming removal",
     "96": "Removal (other)",
 }
+
+# Loss-mitigation modification flags (SFLLD). "Y" = a loan modification (term/rate
+# restructure); "P" = a payment deferral. Both are "problem-exposure" remediation
+# actions (APS 220 para 79 / APG 220 para 68), so we treat either as restructured.
+MODIFIED_FLAGS = {"Y", "P"}
+MOD_LABEL = {"Y": "Modified", "P": "Payment deferral"}
+
+# Original-LVR (loan-to-value at origination) bands, for the higher-risk-product
+# concentration view (APS 220 para 35). "High-LVR" = original LVR above 90%.
+LVR_BAND_EDGES = [0, 60, 70, 80, 90, 95, 200]
+LVR_BAND_LABELS = ["<=60", "60-70", "70-80", "80-90", "90-95", ">95"]
+HIGH_LVR_CUT = 90  # original LVR (%) above which a loan counts as high-LVR
+
+
+def lvr_band(ltv: pd.Series) -> pd.Series:
+    """Map original LTV (%) to an LVR band label (right-closed bins)."""
+    return pd.cut(ltv, bins=LVR_BAND_EDGES, labels=LVR_BAND_LABELS, right=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -306,3 +324,196 @@ def mask_loan_id(loan_seq: pd.Series) -> pd.Series:
     """Mask loan IDs for committed output snapshots (keep last 4 chars only) so
     nothing redistributes loan-level Freddie data."""
     return "****" + loan_seq.str[-4:]
+
+
+# =========================================================================== #
+# Governance layer — concentration (HHI), risk appetite / RAG, problem
+# exposures, and model performance (PSI). This is the layer that turns the
+# metrics above into a monitoring PROGRAMME: appetite -> limits -> RAG status
+# -> escalation. Rule references are stated next to each function.
+# =========================================================================== #
+CONFIG_DIR = REPO_ROOT / "config"
+
+
+# --- Concentration (APS 220 para 35) -------------------------------------- #
+def hhi(shares_pct) -> float:
+    """Herfindahl–Hirschman Index from exposure shares expressed in **percent**
+    (0–100). Returns the standard 0–10,000 scale (Σ share²). Higher = more
+    concentrated. Mirrors the companion commercial monitor's HHI."""
+    s = np.asarray(shares_pct, dtype=float)
+    return float(np.nansum(s ** 2))
+
+
+def hhi_class(h: float) -> str:
+    """Standard HHI concentration bands."""
+    if np.isnan(h):
+        return "n/a"
+    if h < 1500:
+        return "Low (<1500)"
+    if h <= 2500:
+        return "Moderate (1500-2500)"
+    return "High (>2500)"
+
+
+# --- Risk appetite / RAG (APS 220 paras 20/35; APG 220 para 65) ----------- #
+def load_appetite(path: Path | None = None) -> dict:
+    """Load the risk-appetite / limit thresholds from YAML. Thresholds live in
+    config, not in code, so a risk owner can change appetite without touching the
+    engine (APS 220 para 20)."""
+    import yaml
+
+    path = path or (CONFIG_DIR / "risk_appetite.yaml")
+    with open(path, "r", encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def rag(value: float, amber: float, red: float, higher_is_worse: bool = True) -> str:
+    """Green / Amber / Red status for a metric against its amber & red limits."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return "n/a"
+    if higher_is_worse:
+        return "RED" if value >= red else ("AMBER" if value >= amber else "GREEN")
+    return "RED" if value <= red else ("AMBER" if value <= amber else "GREEN")
+
+
+def _period_ord(period: pd.Series | int):
+    """YYYYMM -> absolute month ordinal (works on a Series or a scalar)."""
+    return (period // 100) * 12 + (period % 100)
+
+
+def book_asof(trans: pd.DataFrame, period: int) -> pd.DataFrame:
+    """The still-on-book loans observed in a given reporting month (active
+    delinquency buckets only — terminated/censored rows drop out)."""
+    return trans[(trans["period"] == period) & (trans["bucket"].isin(ACTIVE_BUCKETS))]
+
+
+def stock_metrics(book: pd.DataFrame) -> dict:
+    """Point-in-time (stock) appetite metrics for one as-of book, exposure-weighted
+    on current UPB: NPL ratio, Stage 2 share, top-state share, geographic HHI,
+    high-LVR share."""
+    e = book["cur_upb"].sum()
+
+    def exp_share(mask) -> float:
+        return float(100 * book.loc[mask, "cur_upb"].sum() / e) if e else np.nan
+
+    state_share = (book.groupby("prop_state")["cur_upb"].sum() / e * 100) if e else pd.Series(dtype=float)
+    return {
+        "npl_ratio": exp_share(book["bucket"] == "90+"),
+        "stage2_share": exp_share(book["stage"] == "Stage 2"),
+        "top_state_share": float(state_share.max()) if len(state_share) else np.nan,
+        "geo_hhi": hhi(state_share.values) if len(state_share) else np.nan,
+        "high_lvr_share": exp_share(book["ltv"] > HIGH_LVR_CUT),
+    }
+
+
+def roll_window(trans: pd.DataFrame, end_period: int, months: int = 12) -> dict:
+    """Trailing-window (flow) roll rates ending at `end_period`: new-delinquency
+    (Current->30) and the 30->60 deterioration roll. Count-based over the window,
+    so a single noisy month doesn't drive the appetite trigger (APS 220 para 35)."""
+    end = _period_ord(end_period)
+    sub = trans[trans["bucket"].isin(["Current", "30"]) & trans["next_bucket"].notna()].copy()
+    o = _period_ord(sub["period"])
+    win = sub[(o <= end) & (o > end - months)]
+
+    def roll(frm, to) -> float:
+        d = win[win["bucket"] == frm]
+        return float(100 * (d["next_bucket"] == to).mean()) if len(d) else np.nan
+
+    return {"roll_current_30": roll("Current", "30"), "roll_30_60": roll("30", "60")}
+
+
+def portfolio_metrics_asof(trans: pd.DataFrame, period: int, roll_months: int = 12) -> dict:
+    """All appetite metric values as-of one reporting month: stock metrics at that
+    month + trailing-window flow (roll) metrics ending at that month."""
+    out = stock_metrics(book_asof(trans, period))
+    out.update(roll_window(trans, period, months=roll_months))
+    return out
+
+
+def evaluate_appetite(appetite: dict, this_vals: dict, last_vals: dict) -> pd.DataFrame:
+    """Join the appetite thresholds to the current/prior metric values and assign a
+    RAG status to each — the data behind the Board MI dashboard (APG 220 para 65).
+
+    Returns one row per metric: label, indicator type (leading/lagging), prior &
+    current value, amber & red limits, RAG, owner, breach action, citation."""
+    rows = []
+    for key, c in appetite["metrics"].items():
+        hw = c.get("higher_is_worse", True)
+        this_v, last_v = this_vals.get(key, np.nan), last_vals.get(key, np.nan)
+        rows.append({
+            "metric": c["label"],
+            "type": c["indicator_type"],
+            "last_period": round(last_v, 2) if last_v == last_v else np.nan,
+            "this_period": round(this_v, 2) if this_v == this_v else np.nan,
+            "amber": c["amber"],
+            "red (limit)": c["red"],
+            "RAG": rag(this_v, c["amber"], c["red"], hw),
+            "owner": c["owner"],
+            "breach_action": c["breach_action"],
+            "review_cycle": c["review_cycle"],
+            "basis": c["citation"],
+        })
+    return pd.DataFrame(rows)
+
+
+# --- Problem exposures / modifications (APS 220 para 79; APG 220 para 68) -- #
+def modified_exposure_view(trans: pd.DataFrame) -> pd.DataFrame:
+    """Modified / restructured-exposure outcomes by vintage. For every loan ever
+    flagged modified (or payment-deferred), classify its path AFTER the first
+    modification month: re-defaulted (reached 90+/Default), cured (latest state
+    Current), or still delinquent. The cure-vs-re-default split is the test of
+    whether remediation is working."""
+    p = trans.sort_values(["loan_seq", "mob"]).copy()
+    p["is_mod"] = p["mod_flag"].isin(MODIFIED_FLAGS)
+    mod_loans = p.loc[p["is_mod"], "loan_seq"].unique()
+    first_mod = p[p["is_mod"]].groupby("loan_seq")["mob"].min().rename("first_mod_mob")
+
+    sub = p[p["loan_seq"].isin(mod_loans)].merge(first_mod, on="loan_seq")
+    after = sub[sub["mob"] >= sub["first_mod_mob"]]
+
+    redefault = after.groupby("loan_seq")["bucket"].apply(lambda s: s.isin(["90+", "Default"]).any())
+    latest_bucket = after.sort_values("mob").groupby("loan_seq")["bucket"].last()
+    vintage = sub.groupby("loan_seq")["vintage"].first()
+    exposure = sub.sort_values("mob").groupby("loan_seq")["cur_upb"].last()
+
+    status = pd.Series("still delinquent", index=redefault.index)
+    status[latest_bucket == "Current"] = "cured / performing"
+    status[redefault] = "re-defaulted"
+
+    df = pd.DataFrame({"vintage": vintage, "status": status, "exposure": exposure}).dropna(subset=["vintage"])
+    out = (df.groupby("vintage")
+           .agg(modified_loans=("status", "size"),
+                modified_exposure_upb=("exposure", "sum"),
+                re_default_rate_pct=("status", lambda s: round(100 * (s == "re-defaulted").mean(), 1)),
+                cure_rate_pct=("status", lambda s: round(100 * (s == "cured / performing").mean(), 1)))
+           .reset_index())
+    out["modified_exposure_upb"] = out["modified_exposure_upb"].round(0)
+    return out
+
+
+# --- Model performance / backtest feed (5-layer model, Layer 4) ----------- #
+def psi(expected, actual, bins: int = 10) -> float:
+    """Population Stability Index between an expected (reference) and an actual
+    distribution of a continuous score. Bins on the reference's quantiles. <0.10
+    stable · 0.10–0.25 moderate shift · >0.25 significant shift. This is how the
+    monitor watches whether the population the PD/LGD/EAD model was built on has
+    drifted (rating-system performance, the framework's Layer 4)."""
+    exp = np.asarray(expected, dtype=float)
+    act = np.asarray(actual, dtype=float)
+    exp, act = exp[~np.isnan(exp)], act[~np.isnan(act)]
+    cuts = np.unique(np.quantile(exp, np.linspace(0, 1, bins + 1)))
+    cuts[0], cuts[-1] = -np.inf, np.inf
+    e = np.histogram(exp, cuts)[0] / len(exp)
+    a = np.histogram(act, cuts)[0] / len(act)
+    e, a = np.clip(e, 1e-6, None), np.clip(a, 1e-6, None)
+    return float(np.sum((a - e) * np.log(a / e)))
+
+
+def psi_class(p: float) -> str:
+    if np.isnan(p):
+        return "n/a"
+    if p < 0.10:
+        return "Stable (<0.10)"
+    if p <= 0.25:
+        return "Moderate shift (0.10-0.25)"
+    return "Significant shift (>0.25)"

@@ -346,15 +346,20 @@ save("05_vintage_tracking.ipynb", nb(
 # ===========================================================================
 # 06 — Concentration & monitoring-pack report
 # ===========================================================================
-md06 = """# 06 — Concentration & monitoring-pack report
+md06 = """# 06 — Concentration (geography, HHI, high-LVR)
 
 **Plain English:** Where is the risk *concentrated*? We slice exposure and
-default by geography (state) and by vintage, then assemble a short
-**monitoring-pack report** that pulls the real numbers from every prior notebook.
+default by geography (state) and by vintage, add the **HHI** (a single
+concentration number) for the state book, and a **high-LVR concentration** view
+(exposure by original loan-to-value band). Concentration is a portfolio risk in
+its own right (APS 220 para 35) — these tables feed both the appetite limits
+(notebook 07) and the monitoring pack.
 
 **One-line terms**
-- **Concentration** — how exposure clusters in a few states / cohorts; a portfolio risk in itself.
+- **Concentration** — how exposure clusters in a few states / cohorts / risky products; a portfolio risk in itself.
 - **Exposure (UPB)** — current unpaid principal balance, i.e. money still at risk.
+- **HHI** — Herfindahl–Hirschman Index, Σ(share %)² on a 0–10,000 scale; <1500 low · 1500–2500 moderate · >2500 high.
+- **High-LVR** — loans whose *original* loan-to-value was above 90% (a higher-risk product, APS 220 para 35).
 - **APS 330-style** — laid out like an APRA APS 330 credit-risk disclosure table. *Format only — illustrative, not a regulatory submission.*"""
 
 c06_1 = BOOT + '''
@@ -383,43 +388,374 @@ by_vintage["avg_credit_score"] = by_vintage.avg_credit_score.round(0)
 by_vintage.to_csv(m.OUT_TABLES / "06_concentration_vintage.csv", index=False)
 by_state.round(2).to_csv(m.OUT_TABLES / "06_concentration_state.csv")
 by_vintage'''
-c06_4 = '''# Assemble the monitoring-pack report from real outputs -----------------
-T = m.OUT_TABLES
-rep = ROOT_REPORT = (m.REPO_ROOT / "outputs" / "report")
-rep.mkdir(parents=True, exist_ok=True)
-
-probs_b = pd.read_csv(T / "02_bucket_transition_matrix.csv", index_col=0)
-rr = pd.read_csv(T / "02_roll_rates.csv")
-moves = pd.read_csv(T / "03_stage_movements.csv")
-vint = pd.read_csv(T / "05_vintage_cumulative_default.csv")
-wsumm = pd.read_csv(T / "04_watchlist_summary.csv")
-
-lines = []
-lines.append("# Portfolio Monitoring Pack — loan-level (Freddie Mac SFLLD)\\n")
-lines.append("_Real loan-level mortgage data. The monitoring mechanics apply equally to "
-             "commercial loan portfolios with a monthly status feed._\\n")
-lines.append("## 1. Monthly delinquency-bucket transition matrix\\n")
-lines.append(probs_b.round(4).to_markdown() + "\\n")
-lines.append("![heatmap](../charts/02_bucket_transition_heatmap.png)\\n")
-lines.append("## 2. Headline roll rates\\n")
-lines.append(rr.to_markdown(index=False) + "\\n")
-lines.append("## 3. IFRS 9 stage movements (loan-months)\\n")
-lines.append(moves.to_markdown(index=False) + "\\n")
-lines.append("## 4. Early-warning watchlist (by vintage / stage)\\n")
-lines.append(wsumm.to_markdown(index=False) + "\\n")
-lines.append("## 5. Vintage tracking — cumulative default by months on book\\n")
-lines.append(vint.to_markdown(index=False) + "\\n")
-lines.append("![vintage curves](../charts/05_vintage_default_curves.png)\\n")
-lines.append("## 6. Concentration by state (top 10) — APS 330-style format\\n")
-lines.append("_Format only — illustrative, not a regulatory submission._\\n")
-lines.append(by_state.head(10).round(2).to_markdown() + "\\n")
-
-(rep / "monitoring_pack.md").write_text("\\n".join(lines), encoding="utf-8")
-print("wrote ->", rep / "monitoring_pack.md")'''
+c06_4 = '''# HHI of the state book + high-LVR concentration (APS 220 para 35) -------
+# HHI: one number for "how concentrated is the geography?" (companion commercial
+# monitor reports the same measure). Computed on exposure shares in percent.
+state_share = 100 * active.groupby("prop_state")["cur_upb"].sum() / active["cur_upb"].sum()
+geo_hhi = m.hhi(state_share.values)
+hhi_tbl = pd.DataFrame([{
+    "dimension": "state (geography)",
+    "n_buckets": int(state_share.shape[0]),
+    "top_share_pct": round(float(state_share.max()), 2),
+    "HHI": round(geo_hhi, 0),
+    "classification": m.hhi_class(geo_hhi),
+}])
+hhi_tbl.to_csv(m.OUT_TABLES / "06_concentration_hhi.csv", index=False)
+hhi_tbl'''
+c06_5 = '''# High-LVR concentration: exposure share by ORIGINAL LVR band ------------
+active = active.copy()
+active["lvr_band"] = m.lvr_band(active["ltv"])
+lvr = (active.groupby("lvr_band", observed=False)
+       .agg(loans=("loan_seq", "size"),
+            exposure_upb=("cur_upb", "sum"),
+            pct_90plus=("bucket", lambda s: round(100 * s.isin(["90+", "Default"]).mean(), 2)))
+       )
+lvr["exposure_share_pct"] = (100 * lvr.exposure_upb / lvr.exposure_upb.sum()).round(2)
+high_lvr_share = float(lvr.loc[lvr.index.isin([">95", "90-95"]), "exposure_share_pct"].sum())
+print(f"High-LVR (original LVR > 90%) share of exposure: {high_lvr_share:.2f}%")
+lvr.round(2).to_csv(m.OUT_TABLES / "06_concentration_lvr.csv")
+lvr.round(2)'''
 
 save("06_concentration_report.ipynb", nb(
     new_markdown_cell(md06),
-    new_code_cell(c06_1), new_code_cell(c06_2), new_code_cell(c06_3), new_code_cell(c06_4),
+    new_code_cell(c06_1), new_code_cell(c06_2), new_code_cell(c06_3),
+    new_code_cell(c06_4), new_code_cell(c06_5),
+))
+
+# ===========================================================================
+# 07 — Risk appetite + cascaded limits (the governance layer)   [MON-1/2/3/7]
+# ===========================================================================
+md07 = """# 07 — Risk appetite statement + cascaded limit framework
+
+**Plain English:** The metrics in notebooks 02–06 tell us *what the book is
+doing*; this notebook says *what we will tolerate*. We read a small **risk
+appetite table** from `config/risk_appetite.yaml` — an amber and a red limit, an
+owner, a breach action and a review cycle for each metric — then score the
+current book **green / amber / red (RAG)** against those limits. Monitoring
+without limits is just reporting (APS 220 para 20).
+
+**One-line terms**
+- **Risk appetite** — how much risk the Board is willing to run; expressed as limits.
+- **Amber / Red limit** — early-warning level / hard limit; a red breach escalates to the Board.
+- **RAG status** — green within appetite · amber approaching the limit · red breached.
+- **Leading vs lagging** — leading indicators (SICR share, roll rates) move *before* defaults; lagging ones (NPL) confirm after (APG 220 para 66).
+- **Cascade** — appetite flows Board → portfolio → segment → facility (APS 220 para 35).
+
+> Illustrative demo thresholds — **not a regulatory submission**. Levels are set
+> to plausible mortgage values, not fitted to this crisis+calm sample."""
+
+c07_1 = BOOT + '''
+panel = pd.read_parquet(m.PROC_DIR / "panel.parquet")
+cfg = m.load_appetite()
+print("appetite metrics:", list(cfg["metrics"]))'''
+c07_2 = '''# Current vs prior reporting month, all appetite metrics as-of each --------
+periods = sorted(int(p) for p in panel["period"].unique())
+this_period = periods[-1]
+def _prev(p):
+    y, mn = divmod(p, 100)
+    return (y - 1) * 100 + 12 if mn == 1 else p - 1
+last_period = _prev(this_period) if _prev(this_period) in set(periods) else periods[-2]
+
+this_vals = m.portfolio_metrics_asof(panel, this_period)
+last_vals = m.portfolio_metrics_asof(panel, last_period)
+appetite = m.evaluate_appetite(cfg, this_vals, last_vals)
+appetite.to_csv(m.OUT_TABLES / "07_appetite_status.csv", index=False)
+print(f"this period {this_period} vs last period {last_period}")
+appetite[["metric", "type", "last_period", "this_period", "amber", "red (limit)", "RAG"]]'''
+c07_3 = '''# Leading-indicator TREND over time (not just the pooled matrix) ----------
+# APG 220 para 66: a prudent ADI uses forward-looking indicators. We track the
+# trailing-12m roll rates and the SICR (Current->Stage 2) migration rate at each
+# year-end, so the trend is visible, not just a single pooled number.
+def sicr_rate(trans, end_period, months=12):
+    end = m._period_ord(end_period)
+    sub = trans[(trans["bucket"] == "Current") & trans["next_stage"].notna()].copy()
+    o = m._period_ord(sub["period"])
+    win = sub[(o <= end) & (o > end - months)]
+    return float(100 * (win["next_stage"] == "Stage 2").mean()) if len(win) else np.nan
+
+anchors = [p for p in periods if p % 100 == 12][-5:] or periods[-5:]
+if this_period not in anchors:
+    anchors = anchors + [this_period]
+trend = pd.DataFrame([{
+    "as_of": p,
+    "roll_current_30 (leading)": round(m.roll_window(panel, p)["roll_current_30"], 3),
+    "roll_30_60 (leading)": round(m.roll_window(panel, p)["roll_30_60"], 2),
+    "sicr_current_to_stage2 (leading)": round(sicr_rate(panel, p), 3),
+} for p in anchors])
+trend.to_csv(m.OUT_TABLES / "07_leading_trends.csv", index=False)
+trend'''
+c07_4 = '''# Stress -> limits: would a downturn breach the limits? (MON-7) ----------
+# APS 220 para 73 / APG 220 para 76. Reuse the sister model's crisis severity
+# (this repo's own vintage curves: 2007 ~4x 2015 default at 72m) as a downturn
+# multiplier, and re-test the stressed metrics against their red limits.
+mult = cfg["stress"]["downturn_multiplier"]
+rows = []
+for k in cfg["stress"]["applies_to"]:
+    c = cfg["metrics"][k]
+    cur = this_vals.get(k, float("nan"))
+    stressed = cur * mult
+    rows.append({
+        "metric": c["label"],
+        "current": round(cur, 2),
+        f"stressed (x{mult:g})": round(stressed, 2),
+        "red (limit)": c["red"],
+        "RAG current": m.rag(cur, c["amber"], c["red"]),
+        "RAG under stress": m.rag(stressed, c["amber"], c["red"]),
+    })
+stress = pd.DataFrame(rows)
+stress.to_csv(m.OUT_TABLES / "07_stress_vs_limits.csv", index=False)
+print(f"downturn multiplier x{mult:g} — {cfg['stress']['note']}")
+stress'''
+
+save("07_risk_appetite_limits.ipynb", nb(
+    new_markdown_cell(md07),
+    new_code_cell(c07_1), new_code_cell(c07_2), new_code_cell(c07_3), new_code_cell(c07_4),
+))
+
+# ===========================================================================
+# 08 — Problem exposures: modifications & collections scalability   [MON-5]
+# ===========================================================================
+md08 = """# 08 — Problem exposures: modifications & collections scalability
+
+**Plain English:** A prudent lender takes *early remedial action* on problem
+exposures and watches whether restructuring actually works (APS 220 para 79;
+APG 220 para 68). We use the SFLLD **modification flag** to find every loan that
+was modified or payment-deferred, then ask the only question that matters: after
+the modification, did it **cure** or **re-default**? We close with a one-paragraph
+**collections-scalability** note — the crisis vintages already show how big an
+arrears surge the book might have to absorb.
+
+**One-line terms**
+- **Modification / restructure** — a loss-mitigation change to a struggling loan (rate/term change, or payment deferral).
+- **Re-default** — a modified loan that later reached 90+/default again; the test of whether remediation held.
+- **Collections scalability** — whether the workout function could cope with a stress-driven multiple of today's arrears."""
+
+c08_1 = BOOT + '''
+panel = pd.read_parquet(m.PROC_DIR / "panel.parquet")'''
+c08_2 = '''# Modified / restructured-exposure outcomes by vintage -------------------
+mod_view = m.modified_exposure_view(panel)
+n_mod = int(mod_view["modified_loans"].sum())
+print(f"{n_mod:,} loans ever modified / payment-deferred")
+mod_view'''
+c08_3 = '''# Collections scalability: how big an arrears surge has the book seen? ----
+# Monthly 30+DPD (arrears) rate per vintage; trough vs crisis peak = the surge
+# multiple the collections function would need to absorb in a downturn.
+arr = panel[panel.bucket.isin(m.ACTIVE_BUCKETS)].copy()
+arr["is_arrears"] = arr["bucket"].isin(["30", "60", "90+"])
+mo = (arr.groupby(["vintage", "period"])
+      .agg(active=("loan_seq", "size"), arrears=("is_arrears", "sum")))
+mo = mo[mo["active"] >= 100]
+mo["arrears_pct"] = 100 * mo["arrears"] / mo["active"]
+# Baseline = the cohort's TYPICAL month (median), not the ramp-up zero — so the
+# surge multiple answers "peak was how many times a normal month?".
+scal = (mo.groupby("vintage")["arrears_pct"]
+        .agg(typical_arrears_pct="median", peak_arrears_pct="max").reset_index())
+scal["surge_multiple"] = (scal.peak_arrears_pct / scal.typical_arrears_pct).round(1)
+scal[["typical_arrears_pct", "peak_arrears_pct"]] = scal[["typical_arrears_pct", "peak_arrears_pct"]].round(2)
+scal.to_csv(m.OUT_TABLES / "08_collections_scalability.csv", index=False)
+mod_view.to_csv(m.OUT_TABLES / "08_modified_exposure.csv", index=False)
+print("saved modified-exposure + collections-scalability tables")
+scal'''
+
+save("08_problem_exposures.ipynb", nb(
+    new_markdown_cell(md08),
+    new_code_cell(c08_1), new_code_cell(c08_2), new_code_cell(c08_3),
+))
+
+# ===========================================================================
+# 09 — Model performance / PSI (5-layer model, Layer 4)            [MON-6]
+# ===========================================================================
+md09 = """# 09 — Model performance: population stability (PSI) + backtest feed
+
+**Plain English:** This monitor watches *loans*; the sister
+[mortgage-credit-risk-pd-lgd-ead](https://github.com/Jane511/mortgage-credit-risk-pd-lgd-ead)
+project watches the *model* that scores them. Layer 4 of a five-layer monitoring
+framework is **rating-system / model performance**. We add the link: the **PSI**
+(population stability index) of the score distribution across vintages — has the
+population the PD model was built on drifted? — and a **realised-default-by-grade**
+table that is exactly the **backtest feed** the model needs (realised vs predicted).
+
+**One-line terms**
+- **PSI** — how far one distribution has shifted from a reference; <0.10 stable · 0.10–0.25 moderate · >0.25 significant.
+- **Backtest** — comparing realised outcomes (this monitor) against the model's predicted PDs.
+- **Grade** — a credit-score band, the model's risk ranking.
+
+Predicted PDs live in the sister repo; here we compute PSI on a real panel risk
+feature (credit score) and produce the realised side of the backtest, documenting
+the intended linkage."""
+
+c09_1 = BOOT
+c09_2 = '''# PSI of origination score & LVR across vintages (reference = calm 2015) --
+orig = pd.concat([m.load_orig(v) for v in m.VINTAGES], ignore_index=True)
+ref_v = "2015"
+ref = orig[orig.vintage == ref_v]
+rows = []
+for feat in ["credit_score", "ltv"]:
+    for v in [x for x in m.VINTAGES if x != ref_v]:
+        val = m.psi(ref[feat], orig[orig.vintage == v][feat])
+        rows.append({"feature": feat, "reference": ref_v, "vintage": v,
+                     "PSI": round(val, 3), "classification": m.psi_class(val)})
+psi_tbl = pd.DataFrame(rows)
+psi_tbl.to_csv(m.OUT_TABLES / "09_psi.csv", index=False)
+psi_tbl'''
+c09_3 = '''# Realised default by credit-score grade x vintage (the backtest feed) ----
+panel = pd.read_parquet(m.PROC_DIR / "panel.parquet")
+ever = (panel.assign(d=panel.stage == "Stage 3")
+        .groupby(["vintage", "loan_seq"])
+        .agg(d=("d", "max"), score=("credit_score", "first")).reset_index())
+edges = [300, 620, 660, 700, 740, 780, 850]
+labels = ["<620", "620-659", "660-699", "700-739", "740-779", "780+"]
+ever["grade"] = pd.cut(ever.score, bins=edges, labels=labels, right=False)
+grade = (ever.groupby(["grade", "vintage"], observed=False)["d"]
+         .mean().mul(100).round(2).unstack("vintage"))
+grade.to_csv(m.OUT_TABLES / "09_realised_default_by_grade.csv")
+print("realised cumulative default rate (%) by score grade x vintage:")
+grade'''
+
+save("09_model_performance_psi.ipynb", nb(
+    new_markdown_cell(md09),
+    new_code_cell(c09_1), new_code_cell(c09_2), new_code_cell(c09_3),
+))
+
+# ===========================================================================
+# 10 — Monitoring pack (Board MI: RAG dashboard first)     [MON-2/3/8/9 + all]
+# ===========================================================================
+md10 = """# 10 — Monitoring pack (the Board-style MI dashboard)
+
+**Plain English:** The final step assembles `outputs/report/monitoring_pack.md`
+from the real outputs of every prior notebook. It is built to read as a **Board
+monitoring pack**: it **opens with a RAG dashboard** tied to the appetite limits
+(notebook 07) and an **actions table** for anything amber/red, then lays out the
+supporting evidence — each metric labelled **leading or lagging** — and closes
+with the governance, stress and disclosure notes.
+
+> Format only — illustrative, **not a regulatory submission**."""
+
+c10_1 = BOOT
+c10_2 = r'''# Assemble the Board-style monitoring pack from real outputs -------------
+T = m.OUT_TABLES
+rep = m.REPO_ROOT / "outputs" / "report"
+rep.mkdir(parents=True, exist_ok=True)
+
+appetite = pd.read_csv(T / "07_appetite_status.csv")
+trend    = pd.read_csv(T / "07_leading_trends.csv")
+stress   = pd.read_csv(T / "07_stress_vs_limits.csv")
+probs_b  = pd.read_csv(T / "02_bucket_transition_matrix.csv", index_col=0)
+rr       = pd.read_csv(T / "02_roll_rates.csv")
+moves    = pd.read_csv(T / "03_stage_movements.csv")
+wsumm    = pd.read_csv(T / "04_watchlist_summary.csv")
+vint     = pd.read_csv(T / "05_vintage_cumulative_default.csv")
+state    = pd.read_csv(T / "06_concentration_state.csv", index_col=0)
+hhi_tbl  = pd.read_csv(T / "06_concentration_hhi.csv")
+lvr      = pd.read_csv(T / "06_concentration_lvr.csv", index_col=0)
+mod_view = pd.read_csv(T / "08_modified_exposure.csv")
+scal     = pd.read_csv(T / "08_collections_scalability.csv")
+psi_tbl  = pd.read_csv(T / "09_psi.csv")
+grade    = pd.read_csv(T / "09_realised_default_by_grade.csv", index_col=0)
+
+worst = appetite.RAG.map({"GREEN": 0, "AMBER": 1, "RED": 2, "n/a": 0}).max()
+overall = {0: "GREEN", 1: "AMBER", 2: "RED"}[int(worst)]
+
+L = []
+def add(*xs): L.extend(xs)
+
+add("# Portfolio Monitoring Pack — loan-level (Freddie Mac SFLLD)\n")
+add("_Real loan-level mortgage data. The monitoring mechanics apply equally to "
+    "commercial loan portfolios with a monthly status feed._\n")
+add("_Format only — illustrative, **not a regulatory submission**._\n")
+
+# --- 1. RAG dashboard (MON-2) ------------------------------------------------
+add("## 1. Risk appetite dashboard — RAG vs limits\n")
+add(f"**Overall portfolio status: {overall}.** Each metric is scored against the "
+    "amber (early-warning) and red (limit) thresholds in `config/risk_appetite.yaml` "
+    "(APS 220 paras 20/35; APG 220 para 65). `type` flags leading vs lagging.\n")
+dash = appetite[["metric", "type", "last_period", "this_period", "amber", "red (limit)", "RAG"]]
+add(dash.to_markdown(index=False) + "\n")
+
+# Actions table for anything amber/red
+flagged = appetite[appetite.RAG.isin(["AMBER", "RED"])]
+add("### Actions (amber/red)\n")
+if len(flagged):
+    act = flagged[["metric", "RAG", "breach_action", "owner", "review_cycle"]].rename(
+        columns={"breach_action": "action", "review_cycle": "due"})
+    add(act.to_markdown(index=False) + "\n")
+else:
+    add("_All metrics within appetite this period — no escalations required._\n")
+add("**Forward-looking view:** leading indicators (Stage 2 share, roll rates, SICR) "
+    "are read first because they move before losses; the vintage curves (section 7) show "
+    "how fast a downturn cohort can deteriorate, and the stress test (section 10) shows "
+    "the same metrics against their limits under a downturn multiple.\n")
+
+# --- 2. Leading-indicator trends (MON-3) ------------------------------------
+add("## 2. Leading-indicator trends (forward-looking)\n")
+add("APG 220 para 66 — do not rely solely on lagging arrears. Trailing-12m roll rates "
+    "and the SICR (Current->Stage 2) migration rate, tracked over time:\n")
+add(trend.to_markdown(index=False) + "\n")
+
+# --- 3. Transition matrix + roll rates (lagging/leading labelled) -----------
+add("## 3. Monthly delinquency-bucket transition matrix  _(lagging)_\n")
+add(probs_b.round(4).to_markdown() + "\n")
+add("![heatmap](../charts/02_bucket_transition_heatmap.png)\n")
+add("## 4. Headline roll rates  _(leading — deterioration moves before default)_\n")
+add(rr.to_markdown(index=False) + "\n")
+
+# --- 5. Stage movements / 6. watchlist / 7. vintage -------------------------
+add("## 5. IFRS 9 stage movements (loan-months)  _(mixed)_\n")
+add(moves.to_markdown(index=False) + "\n")
+add("## 6. Early-warning watchlist (by vintage / stage)  _(leading)_\n")
+add(wsumm.to_markdown(index=False) + "\n")
+add("## 7. Vintage tracking — cumulative default by months on book  _(lagging)_\n")
+add(vint.to_markdown(index=False) + "\n")
+add("![vintage curves](../charts/05_vintage_default_curves.png)\n")
+
+# --- 8. Concentration: state + HHI + LVR (MON-4) ----------------------------
+add("## 8. Concentration — geography, HHI & high-LVR (APS 220 para 35)\n")
+add("_Format only — illustrative, not a regulatory submission._\n")
+add("**By state (top 10):**\n")
+add(state.head(10).round(2).to_markdown() + "\n")
+add("**Geographic HHI:**\n")
+add(hhi_tbl.to_markdown(index=False) + "\n")
+add("**High-LVR concentration (by original LVR band):**\n")
+add(lvr.round(2).to_markdown() + "\n")
+
+# --- 9. Problem exposures (MON-5) -------------------------------------------
+add("## 9. Problem exposures — modifications & collections scalability (APS 220 para 79)\n")
+add("Modified / restructured loans and whether they cured or re-defaulted:\n")
+add(mod_view.to_markdown(index=False) + "\n")
+add("Collections scalability — trough vs crisis-peak monthly arrears (30+DPD) rate; "
+    "the surge multiple is the load the workout function must be able to absorb:\n")
+add(scal.to_markdown(index=False) + "\n")
+
+# --- 10. Model performance / PSI (MON-6) ------------------------------------
+add("## 10. Model performance — population stability (PSI) & backtest feed\n")
+add("Layer 4 (rating-system performance). PSI of origination features vs the calm-2015 "
+    "reference, and realised default by grade — the backtest feed for the sister "
+    "[mortgage-credit-risk-pd-lgd-ead](https://github.com/Jane511/mortgage-credit-risk-pd-lgd-ead) model:\n")
+add(psi_tbl.to_markdown(index=False) + "\n")
+add("Realised cumulative default (%) by credit-score grade x vintage:\n")
+add(grade.to_markdown() + "\n")
+
+# --- 11. Governance / stress / disclosure notes (MON-7/8/9) -----------------
+add("## 11. Governance, stress & disclosure notes\n")
+add("**Stress -> limits (MON-7; APS 220 para 73 / APG 220 para 76).** Applying a "
+    "downturn multiple (grounded in this repo's own vintage curves — 2007 reaches ~4x "
+    "2015 default) to the flow/quality metrics re-tests them against their limits:\n")
+add(stress.to_markdown(index=False) + "\n")
+add("**Governance & independent validation (MON-8; APS 220 paras 28/75-76; APG 113 para 140).** "
+    "Reporting cadence: the watchlist and roll rates go monthly to the Credit Risk Committee; "
+    "the appetite RAG dashboard and concentration go monthly to the Board Risk Committee; "
+    "the PSI/model-performance layer goes at least annually to model governance. The monitoring "
+    "framework itself would be **independently validated annually**. _Demo, not a production system._\n")
+add("**APS 330 / Pillar 3 framing (MON-9).** The concentration and credit-quality outputs "
+    "(sections 7-8) are the inputs that feed **Pillar 3 (APS 330)** credit-risk disclosure. "
+    "Any APS 330-style table here is **format only — illustrative, not a regulatory submission**.\n")
+
+(rep / "monitoring_pack.md").write_text("\n".join(L), encoding="utf-8")
+print("wrote ->", rep / "monitoring_pack.md", f"| overall RAG: {overall}")'''
+
+save("10_monitoring_pack.ipynb", nb(
+    new_markdown_cell(md10),
+    new_code_cell(c10_1), new_code_cell(c10_2),
 ))
 
 print("\\nAll notebooks generated.")

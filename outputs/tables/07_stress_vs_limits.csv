@@ -1,0 +1,5 @@
+metric,current,stressed (x3),red (limit),RAG current,RAG under stress
+NPL ratio (Stage 3 / 90+ share of EAD),0.86,2.58,4.0,GREEN,AMBER
+Stage 2 share of EAD (SICR watch book),1.9,5.71,8.0,GREEN,AMBER
+30->60 roll rate (trailing 12m),15.73,47.19,30.0,GREEN,RED
+"New-delinquency roll (Current->30, trailing 12m)",0.69,2.06,2.0,GREEN,RED
