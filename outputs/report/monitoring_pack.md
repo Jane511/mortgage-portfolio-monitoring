@@ -2,7 +2,42 @@
 
 _Real loan-level mortgage data. The monitoring mechanics apply equally to commercial loan portfolios with a monthly status feed._
 
-## 1. Monthly delinquency-bucket transition matrix
+_Format only — illustrative, **not a regulatory submission**._
+
+## 1. Risk appetite dashboard — RAG vs limits
+
+**Overall portfolio status: GREEN.** Each metric is scored against the amber (early-warning) and red (limit) thresholds in `config/risk_appetite.yaml` (APS 220 paras 20/35; APG 220 para 65). `type` flags leading vs lagging.
+
+| metric                                              | type    |   last_period |   this_period |   amber |   red (limit) | RAG   |
+|:----------------------------------------------------|:--------|--------------:|--------------:|--------:|--------------:|:------|
+| NPL ratio (Stage 3 / 90+ share of EAD)              | lagging |          0.9  |          0.86 |       2 |             4 | GREEN |
+| Stage 2 share of EAD (SICR watch book)              | leading |          2.01 |          1.9  |       5 |             8 | GREEN |
+| High-LVR book share (original LVR > 90% of EAD)     | leading |         12.96 |         13    |      15 |            25 | GREEN |
+| Geographic concentration (top-state exposure share) | lagging |         17.3  |         17.27 |      20 |            30 | GREEN |
+| Geographic concentration (state HHI, 0-10,000)      | lagging |        569.15 |        568.35 |    1500 |          2500 | GREEN |
+| 30->60 roll rate (trailing 12m)                     | leading |         15.49 |         15.73 |      20 |            30 | GREEN |
+| New-delinquency roll (Current->30, trailing 12m)    | leading |          0.69 |          0.69 |       1 |             2 | GREEN |
+
+### Actions (amber/red)
+
+_All metrics within appetite this period — no escalations required._
+
+**Forward-looking view:** leading indicators (Stage 2 share, roll rates, SICR) are read first because they move before losses; the vintage curves (section 7) show how fast a downturn cohort can deteriorate, and the stress test (section 10) shows the same metrics against their limits under a downturn multiple.
+
+## 2. Leading-indicator trends (forward-looking)
+
+APG 220 para 66 — do not rely solely on lagging arrears. Trailing-12m roll rates and the SICR (Current->Stage 2) migration rate, tracked over time:
+
+|   as_of |   roll_current_30 (leading) |   roll_30_60 (leading) |   sicr_current_to_stage2 (leading) |
+|--------:|----------------------------:|-----------------------:|-----------------------------------:|
+|  202012 |                       1.06  |                  35.07 |                              1.063 |
+|  202112 |                       0.624 |                  17.66 |                              0.625 |
+|  202212 |                       0.698 |                  17.95 |                              0.7   |
+|  202312 |                       0.646 |                  15.41 |                              0.649 |
+|  202412 |                       0.717 |                  14.55 |                              0.719 |
+|  202509 |                       0.686 |                  15.73 |                              0.689 |
+
+## 3. Monthly delinquency-bucket transition matrix  _(lagging)_
 
 | bucket   |   Current |     30 |     60 |    90+ |   Default |   Prepaid |
 |:---------|----------:|-------:|-------:|-------:|----------:|----------:|
@@ -13,7 +48,7 @@ _Real loan-level mortgage data. The monitoring mechanics apply equally to commer
 
 ![heatmap](../charts/02_bucket_transition_heatmap.png)
 
-## 2. Headline roll rates
+## 4. Headline roll rates  _(leading — deterioration moves before default)_
 
 | roll_rate                             |   monthly_probability |
 |:--------------------------------------|----------------------:|
@@ -25,7 +60,7 @@ _Real loan-level mortgage data. The monitoring mechanics apply equally to commer
 | 60 -> Current/30 (cure)               |                0.2523 |
 | Current -> Prepaid (voluntary exit)   |                0.0149 |
 
-## 3. IFRS 9 stage movements (loan-months)
+## 5. IFRS 9 stage movements (loan-months)  _(mixed)_
 
 | move                          |   loan_months |   share |
 |:------------------------------|--------------:|--------:|
@@ -42,7 +77,7 @@ _Real loan-level mortgage data. The monitoring mechanics apply equally to commer
 | 3 -> exit (prepaid)           |           807 |  0.0001 |
 | 1 -> 3  deteriorate (default) |           632 |  0.0001 |
 
-## 4. Early-warning watchlist (by vintage / stage)
+## 6. Early-warning watchlist (by vintage / stage)  _(leading)_
 
 |   vintage | stage   |   loans |   exposure_upb |
 |----------:|:--------|--------:|---------------:|
@@ -53,7 +88,7 @@ _Real loan-level mortgage data. The monitoring mechanics apply equally to commer
 |      2015 | Stage 2 |     155 |    2.37496e+07 |
 |      2015 | Stage 3 |      56 |    9.71566e+06 |
 
-## 5. Vintage tracking — cumulative default by months on book
+## 7. Vintage tracking — cumulative default by months on book  _(lagging)_
 
 |   months_on_book |   2007_cum_default_pct |   2008_cum_default_pct |   2015_cum_default_pct |
 |-----------------:|-----------------------:|-----------------------:|-----------------------:|
@@ -66,9 +101,11 @@ _Real loan-level mortgage data. The monitoring mechanics apply equally to commer
 
 ![vintage curves](../charts/05_vintage_default_curves.png)
 
-## 6. Concentration by state (top 10) — APS 330-style format
+## 8. Concentration — geography, HHI & high-LVR (APS 220 para 35)
 
 _Format only — illustrative, not a regulatory submission._
+
+**By state (top 10):**
 
 | prop_state   |   loans |   exposure_upb |   pct_90plus |   exposure_share_pct |
 |:-------------|--------:|---------------:|-------------:|---------------------:|
@@ -82,3 +119,75 @@ _Format only — illustrative, not a regulatory submission._
 | PA           |     587 |    5.88162e+07 |         0.68 |                 3.39 |
 | MA           |     336 |    5.15798e+07 |         0.6  |                 2.97 |
 | GA           |     470 |    4.90373e+07 |         0.64 |                 2.83 |
+
+**Geographic HHI:**
+
+| dimension         |   n_buckets |   top_share_pct |   HHI | classification   |
+|:------------------|------------:|----------------:|------:|:-----------------|
+| state (geography) |          54 |           17.26 |   568 | Low (<1500)      |
+
+**High-LVR concentration (by original LVR band):**
+
+| lvr_band   |   loans |   exposure_upb |   pct_90plus |   exposure_share_pct |
+|:-----------|--------:|---------------:|-------------:|---------------------:|
+| <=60       |    3486 |    3.51138e+08 |         0.4  |                20.23 |
+| 60-70      |    2110 |    2.5271e+08  |         0.52 |                14.56 |
+| 70-80      |    5631 |    7.13208e+08 |         0.8  |                41.09 |
+| 80-90      |    1483 |    1.92982e+08 |         1.08 |                11.12 |
+| 90-95      |    1468 |    1.91316e+08 |         0.95 |                11.02 |
+| >95        |     338 |    3.42298e+07 |         0.3  |                 1.97 |
+
+## 9. Problem exposures — modifications & collections scalability (APS 220 para 79)
+
+Modified / restructured loans and whether they cured or re-defaulted:
+
+|   vintage |   modified_loans |   modified_exposure_upb |   re_default_rate_pct |   cure_rate_pct |
+|----------:|-----------------:|------------------------:|----------------------:|----------------:|
+|      2007 |             3079 |             4.37555e+07 |                  51.1 |            44.1 |
+|      2008 |             1712 |             2.71246e+07 |                  44.1 |            50.6 |
+|      2015 |              463 |             4.62338e+07 |                  33.3 |            57   |
+
+Collections scalability — trough vs crisis-peak monthly arrears (30+DPD) rate; the surge multiple is the load the workout function must be able to absorb:
+
+|   vintage |   typical_arrears_pct |   peak_arrears_pct |   surge_multiple |
+|----------:|----------------------:|-------------------:|-----------------:|
+|      2007 |                 11.71 |              15.69 |              1.3 |
+|      2008 |                  8.11 |              12.41 |              1.5 |
+|      2015 |                  1.61 |               4.89 |              3   |
+
+## 10. Model performance — population stability (PSI) & backtest feed
+
+Layer 4 (rating-system performance). PSI of origination features vs the calm-2015 reference, and realised default by grade — the backtest feed for the sister [mortgage-credit-risk-pd-lgd-ead](https://github.com/Jane511/mortgage-credit-risk-pd-lgd-ead) model:
+
+| feature      |   reference |   vintage |   PSI | classification             |
+|:-------------|------------:|----------:|------:|:---------------------------|
+| credit_score |        2015 |      2007 | 0.212 | Moderate shift (0.10-0.25) |
+| credit_score |        2015 |      2008 | 0.028 | Stable (<0.10)             |
+| ltv          |        2015 |      2007 | 0.026 | Stable (<0.10)             |
+| ltv          |        2015 |      2008 | 0.073 | Stable (<0.10)             |
+
+Realised cumulative default (%) by credit-score grade x vintage:
+
+| grade   |   2007 |   2008 |   2015 |
+|:--------|-------:|-------:|-------:|
+| <620    |  38.97 |  39    |  14.21 |
+| 620-659 |  33.51 |  27.04 |  11.7  |
+| 660-699 |  24.89 |  17.6  |   8.51 |
+| 700-739 |  17.17 |  10.94 |   4.95 |
+| 740-779 |   9.07 |   5.55 |   3.22 |
+| 780+    |   4.19 |   2.62 |   1.64 |
+
+## 11. Governance, stress & disclosure notes
+
+**Stress -> limits (MON-7; APS 220 para 73 / APG 220 para 76).** Applying a downturn multiple (grounded in this repo's own vintage curves — 2007 reaches ~4x 2015 default) to the flow/quality metrics re-tests them against their limits:
+
+| metric                                           |   current |   stressed (x3) |   red (limit) | RAG current   | RAG under stress   |
+|:-------------------------------------------------|----------:|----------------:|--------------:|:--------------|:-------------------|
+| NPL ratio (Stage 3 / 90+ share of EAD)           |      0.86 |            2.58 |             4 | GREEN         | AMBER              |
+| Stage 2 share of EAD (SICR watch book)           |      1.9  |            5.71 |             8 | GREEN         | AMBER              |
+| 30->60 roll rate (trailing 12m)                  |     15.73 |           47.19 |            30 | GREEN         | RED                |
+| New-delinquency roll (Current->30, trailing 12m) |      0.69 |            2.06 |             2 | GREEN         | RED                |
+
+**Governance & independent validation (MON-8; APS 220 paras 28/75-76; APG 113 para 140).** Reporting cadence: the watchlist and roll rates go monthly to the Credit Risk Committee; the appetite RAG dashboard and concentration go monthly to the Board Risk Committee; the PSI/model-performance layer goes at least annually to model governance. The monitoring framework itself would be **independently validated annually**. _Demo, not a production system._
+
+**APS 330 / Pillar 3 framing (MON-9).** The concentration and credit-quality outputs (sections 7-8) are the inputs that feed **Pillar 3 (APS 330)** credit-risk disclosure. Any APS 330-style table here is **format only — illustrative, not a regulatory submission**.
