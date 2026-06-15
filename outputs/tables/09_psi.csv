@@ -1,0 +1,5 @@
+feature,reference,vintage,PSI,classification
+credit_score,2015,2007,0.212,Moderate shift (0.10-0.25)
+credit_score,2015,2008,0.028,Stable (<0.10)
+ltv,2015,2007,0.026,Stable (<0.10)
+ltv,2015,2008,0.073,Stable (<0.10)
