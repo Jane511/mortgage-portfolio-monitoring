@@ -104,4 +104,39 @@ ax.set_title("Cumulative default by months on book — downturn vs calm")
 ax.legend(frameon=False)
 save(fig, "vintage_default_curves.png")
 
+# 5. Risk-appetite RAG dashboard (this period vs amber/red limits) -----------
+ap = pd.read_csv(TAB / "07_appetite_status.csv")
+RAG_C = {"GREEN": "#1a9850", "AMBER": "#fdae61", "RED": "#b2182b", "n/a": "#9e9e9e"}
+# Each metric on its own 0..red-scaled axis: plot value as % of its red limit so
+# heterogeneous metrics (HHI, %, roll) share one comparable bar.
+ap = ap.iloc[::-1].reset_index(drop=True)
+pct_of_limit = 100 * ap["this_period"] / ap["red (limit)"]
+amber_of_limit = 100 * ap["amber"] / ap["red (limit)"]
+fig, ax = plt.subplots(figsize=(9.2, 5.0))
+ax.barh(ap["metric"], pct_of_limit, color=[RAG_C[r] for r in ap["RAG"]], edgecolor="white")
+for y, (v, r) in enumerate(zip(pct_of_limit, ap["RAG"])):
+    ax.text(v + 1, y, f" {r}", va="center", fontsize=9)
+for y, a in enumerate(amber_of_limit):
+    ax.plot([a, a], [y - 0.4, y + 0.4], color="#7a5c00", lw=1.4, ls="--")
+ax.axvline(100, color="#b2182b", lw=1.6, ls="-")
+ax.text(100, len(ap) - 0.4, " red limit", color="#b2182b", fontsize=9, va="top")
+ax.set_xlabel("this period as % of red (limit)  —  amber marks shown dashed")
+ax.set_title("Risk-appetite RAG dashboard vs limits")
+ax.grid(axis="y", alpha=0)
+save(fig, "appetite_rag_dashboard.png")
+
+# 6. Model backtest — realised default by credit-score grade x vintage --------
+gr = pd.read_csv(TAB / "09_realised_default_by_grade.csv").set_index("grade")
+fig, ax = plt.subplots(figsize=(8.2, 4.8))
+x = np.arange(len(gr)); w = 0.26
+for i, (col, color, lab) in enumerate([("2007", RED, "2007 (crisis)"),
+                                       ("2008", "#ef8a62", "2008 (crisis)"),
+                                       ("2015", BLUE, "2015 (calm)")]):
+    ax.bar(x + (i - 1) * w, gr[col], w, color=color, label=lab)
+ax.set_xticks(x); ax.set_xticklabels(gr.index)
+ax.set_xlabel("credit-score grade"); ax.set_ylabel("realised cumulative default (%)")
+ax.set_title("Model backtest feed — realised default by grade & vintage")
+ax.legend(frameon=False)
+save(fig, "realised_default_by_grade.png")
+
 print("\nAll figures written to", FIG)

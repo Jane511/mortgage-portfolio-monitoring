@@ -10,8 +10,17 @@ This is the **monitoring** companion to my mortgage credit-risk model: that proj
 over time*. The strength here is the **monthly panel** — one row per loan per month —
 which is what every transition and migration measure is built from.
 
+On top of the metrics sits a **governance layer** that turns them into a monitoring
+*programme*: a **risk appetite statement** with cascaded **limits** (config-driven),
+a **Board-style RAG dashboard** that scores the book green/amber/red against those
+limits, leading-vs-lagging framing, concentration (HHI + high-LVR), problem-exposure
+(modification) tracking, a stress→limits link, and a model-performance (PSI) layer
+that feeds the sister model's backtest. Framework references trace to APRA APS 220 /
+APG 220 / APS 113 / APS 330 (see [the monitoring pack](outputs/report/monitoring_pack.md)).
+
 > Demonstrated on real loan-level mortgage data; the monitoring **mechanics** apply
 > equally to any commercial loan portfolio with a monthly status feed.
+> Governance thresholds are **illustrative demo values — not a regulatory submission.**
 
 ---
 
@@ -21,7 +30,8 @@ which is what every transition and migration measure is built from.
 - **Headline visual** — monthly transition heatmap: [outputs/charts/02_bucket_transition_heatmap.png](outputs/charts/02_bucket_transition_heatmap.png)
 - **The standout story** — vintage default curves (downturn vs calm): [outputs/charts/05_vintage_default_curves.png](outputs/charts/05_vintage_default_curves.png)
 - **The engine** — all credit-risk logic in one inspectable file: [src/monitor.py](src/monitor.py)
-- **The build** — ordered notebooks 00→06: [notebooks/](notebooks/)
+- **The governance layer** — risk-appetite limits driving the RAG dashboard: [config/risk_appetite.yaml](config/risk_appetite.yaml)
+- **The build** — ordered notebooks 00→10: [notebooks/](notebooks/)
 
 ---
 
@@ -53,6 +63,18 @@ by [reports/make_figures.py](reports/make_figures.py) — aggregated transition 
 
 **What this shows:** cumulative default rate as each cohort ages, on a common "months on book" clock.
 **Why it matters:** the 2007 cohort reaches ~4× the cumulative default of 2015 — the clearest demonstration of why vintage monitoring matters.
+
+### 5. Risk-appetite RAG dashboard (the governance layer)
+![Risk-appetite dashboard: each metric as a percent of its red limit, coloured green/amber/red](reports/figures/appetite_rag_dashboard.png)
+
+**What this shows:** each appetite metric scored against its amber (early-warning) and red (limit) thresholds from [config/risk_appetite.yaml](config/risk_appetite.yaml), drawn as a share of its red limit.
+**Why it matters:** this is what makes it *monitoring*, not just reporting — a Board reads the colour, not the table. Limits live in config so a risk owner can change appetite without touching the engine (APS 220 para 20/35).
+
+### 6. Model backtest — realised default by grade & vintage
+![Grouped bars of realised cumulative default by credit-score grade for each vintage](reports/figures/realised_default_by_grade.png)
+
+**What this shows:** realised cumulative default by credit-score grade for each vintage — monotonic in grade, and far higher for the crisis cohorts.
+**Why it matters:** this is the **backtest feed** for the sister PD/LGD/EAD model — realised (this monitor) vs predicted (the model), the framework's model-performance layer (Layer 4).
 
 ---
 
@@ -128,6 +150,25 @@ demonstration of why vintage monitoring matters.
 
 ---
 
+## The governance layer — from metrics to a monitoring programme
+
+The metrics above tell you *what the book is doing*; the governance layer says
+*what you will tolerate and what you do when a limit is hit*. It maps to APRA's
+APS 220 / APG 220 monitoring expectations:
+
+| Layer | What it adds | Notebook | Rule |
+|---|---|---|---|
+| **Risk appetite + limits** | appetite table — amber/red limit, owner, breach action, review cycle — for each metric; thresholds in [config/risk_appetite.yaml](config/risk_appetite.yaml), not code | `07` | APS 220 para 20/35 |
+| **Board RAG dashboard** | the pack opens with a `metric \| last \| this \| limit \| RAG` dashboard + an actions table for anything amber/red | `10` | APG 220 para 65 |
+| **Leading vs lagging** | every metric labelled; leading-indicator *trends* (SICR, roll rates) tracked over time, not just pooled | `07`/`10` | APG 220 para 66 |
+| **Concentration** | geographic **HHI** + **high-LVR** (original LVR > 90%) concentration, tied to the appetite limits | `06` | APS 220 para 35 |
+| **Problem exposures** | modified/restructured-loan outcomes (cure vs re-default) + a collections-scalability note | `08` | APS 220 para 79 |
+| **Model performance** | **PSI** of the score distribution across vintages + realised-default-by-grade backtest feed to the sister model | `09` | 5-layer model, Layer 4 |
+| **Stress → limits** | a downturn multiple (this repo's own crisis severity) re-tests the metrics against their limits | `07`/`10` | APS 220 para 73 |
+
+> All thresholds are **illustrative demo values**, set to plausible mortgage levels —
+> not fitted to this crisis+calm sample, and **not a regulatory submission**.
+
 ## Key definitions (stated precisely)
 
 - **Delinquency bucket** — from the monthly delinquency status: Current (0 days past
@@ -169,19 +210,26 @@ per month, carrying the delinquency status that everything here is built from.
 .
 ├── raw data/              # SFLLD files (2007/2008/2015) — GITIGNORED, never committed
 ├── data/processed/        # cached loan-month panel — GITIGNORED, rebuilt by nb 00-01
-├── notebooks/             # ordered build 00–06
+├── config/
+│   └── risk_appetite.yaml # appetite limits (amber/red), owners, breach actions — drives the RAG dashboard
+├── notebooks/             # ordered build 00–10
 │   ├── 00_load_and_assemble        # join orig + monthly perf; derive bucket & stage; data quality
 │   ├── 01_loan_month_panel         # the base table: one row per loan per month (+ next-month state)
 │   ├── 02_transition_matrices_roll_rates   # bucket + IFRS 9 matrices, roll rates, heatmap
 │   ├── 03_ifrs9_stage_movements    # period-over-period stage classification + movement summary
 │   ├── 04_early_warning_watchlist  # flag deteriorating loans; watchlist table
 │   ├── 05_vintage_tracking         # cumulative default by months on book + curve chart
-│   └── 06_concentration_report     # concentration by state/vintage + monitoring-pack report
+│   ├── 06_concentration_report     # concentration by state/vintage + HHI + high-LVR bands
+│   ├── 07_risk_appetite_limits     # appetite table, RAG status, leading-indicator trends, stress→limits
+│   ├── 08_problem_exposures        # modified/restructured exposure outcomes + collections scalability
+│   ├── 09_model_performance_psi    # PSI across vintages + realised-default-by-grade backtest feed
+│   └── 10_monitoring_pack          # assembles the Board-style pack (RAG dashboard first)
 ├── outputs/
 │   ├── tables/            # CSV result snapshots (committed)
 │   ├── charts/            # heatmap + vintage curves (committed)
 │   └── report/            # monitoring_pack.md (committed)
-├── src/monitor.py         # the engine: loaders, bucket/stage logic, transitions, roll rates
+├── src/monitor.py         # the engine: loaders, bucket/stage logic, transitions, roll rates, governance layer
+├── reports/make_figures.py # regenerates README charts from committed tables
 ├── tools/make_notebooks.py # regenerates the notebooks
 ├── requirements.txt
 └── .gitignore
@@ -195,10 +243,12 @@ pip install -r requirements.txt
 # ".../sample_2015/" (each with sample_orig_YYYY.txt and sample_svcg_YYYY.txt).
 python tools/make_notebooks.py     # (re)generate the notebooks
 jupyter nbconvert --to notebook --execute --inplace notebooks/*.ipynb
+python reports/make_figures.py     # (re)generate README charts from the committed tables
 ```
-Notebooks 00–01 assemble and cache the loan-month panel once; 02–06 read the cached
+Notebooks 00–01 assemble and cache the loan-month panel once; 02–10 read the cached
 panel and run in seconds, writing tables to `outputs/tables/`, charts to
-`outputs/charts/`, and the report to `outputs/report/`.
+`outputs/charts/`, and the Board-style pack to `outputs/report/monitoring_pack.md`.
+The governance layer (07–10) reads its limits from `config/risk_appetite.yaml`.
 
 ## Relationship to the mortgage credit-risk model
 
