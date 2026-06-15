@@ -273,3 +273,7 @@ project, and the steepest vintage curve here.
   transition probabilities.
 - Transitions are pooled across vintages for the headline matrix; per-vintage and
   macro-conditioned matrices are a natural extension.
+
+## License
+
+Released under the MIT License — free to read, run, and reuse with attribution.
