@@ -622,7 +622,7 @@ save("09_model_performance_psi.ipynb", nb(
 # ===========================================================================
 md10 = """# 10 — Monitoring pack (the Board-style MI dashboard)
 
-**Plain English:** The final step assembles `outputs/report/monitoring_pack.md`
+**Plain English:** The final step assembles `outputs/reports/monitoring_pack.md`
 from the real outputs of every prior notebook. It is built to read as a **Board
 monitoring pack**: it **opens with a RAG dashboard** tied to the appetite limits
 (notebook 07) and an **actions table** for anything amber/red, then lays out the
@@ -634,7 +634,7 @@ with the governance, stress and disclosure notes.
 c10_1 = BOOT
 c10_2 = r'''# Assemble the Board-style monitoring pack from real outputs -------------
 T = m.OUT_TABLES
-rep = m.REPO_ROOT / "outputs" / "report"
+rep = m.REPO_ROOT / "outputs" / "reports"
 rep.mkdir(parents=True, exist_ok=True)
 
 appetite = pd.read_csv(T / "07_appetite_status.csv")

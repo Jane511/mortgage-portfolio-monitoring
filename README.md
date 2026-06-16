@@ -16,7 +16,7 @@ a **Board-style RAG dashboard** that scores the book green/amber/red against tho
 limits, leading-vs-lagging framing, concentration (HHI + high-LVR), problem-exposure
 (modification) tracking, a stress→limits link, and a model-performance (PSI) layer
 that feeds the sister model's backtest. Framework references trace to APRA APS 220 /
-APG 220 / APS 113 / APS 330 (see [the monitoring pack](outputs/report/monitoring_pack.md)).
+APG 220 / APS 113 / APS 330 (see [the monitoring pack](outputs/reports/monitoring_pack.md)).
 
 > Demonstrated on real loan-level mortgage data; the monitoring **mechanics** apply
 > equally to any commercial loan portfolio with a monthly status feed.
@@ -26,7 +26,7 @@ APG 220 / APS 113 / APS 330 (see [the monitoring pack](outputs/report/monitoring
 
 ## See it in 30 seconds
 
-- **The monitoring pack** (all results, one page): [outputs/report/monitoring_pack.md](outputs/report/monitoring_pack.md)
+- **The monitoring pack** (all results, one page): [outputs/reports/monitoring_pack.md](outputs/reports/monitoring_pack.md)
 - **Headline visual** — monthly transition heatmap: [outputs/charts/02_bucket_transition_heatmap.png](outputs/charts/02_bucket_transition_heatmap.png)
 - **The standout story** — vintage default curves (downturn vs calm): [outputs/charts/05_vintage_default_curves.png](outputs/charts/05_vintage_default_curves.png)
 - **The engine** — all credit-risk logic in one inspectable file: [src/monitor.py](src/monitor.py)
@@ -38,40 +38,40 @@ APG 220 / APS 113 / APS 330 (see [the monitoring pack](outputs/report/monitoring
 ## Key charts
 
 *All charts are regenerated from the committed result tables in [outputs/tables/](outputs/tables/)
-by [reports/make_figures.py](reports/make_figures.py) — aggregated transition metrics only, no raw loan records.*
+by [tools/make_figures.py](tools/make_figures.py) — aggregated transition metrics only, no raw loan records.*
 
 ### 1. Monthly transition matrix (the headline)
-![Heatmap of the monthly delinquency-bucket transition matrix](reports/figures/transition_matrix_heatmap.png)
+![Heatmap of the monthly delinquency-bucket transition matrix](outputs/charts/transition_matrix_heatmap.png)
 
 **What this shows:** of the loans in each row's state this month, the share in each column's state next month (each row sums to 1).
 **Why it matters:** it is the whole monitor in one picture — the bright diagonal is "stayed put", and you can read straight off it that a 60-days-late loan has a ~38% chance of rolling to 90+ next month.
 
 ### 2. Roll rates — deterioration vs cure
-![Roll rates bar chart, deterioration in red and cure in blue](reports/figures/roll_rates.png)
+![Roll rates bar chart, deterioration in red and cure in blue](outputs/charts/roll_rates.png)
 
 **What this shows:** the monthly chance of the key worse-bucket moves (red) and recovery moves (blue).
 **Why it matters:** these are the dials an early-warning process tracks — a rising 30→60 roll rate is the first sign a book is turning before defaults show up.
 
 ### 3. IFRS 9 stage mix by vintage
-![Stacked bar of IFRS 9 stage 1/2/3 share for the 2007, 2008 and 2015 vintages](reports/figures/stage_mix_by_vintage.png)
+![Stacked bar of IFRS 9 stage 1/2/3 share for the 2007, 2008 and 2015 vintages](outputs/charts/stage_mix_by_vintage.png)
 
 **What this shows:** the share of loan-months in IFRS 9 Stage 1 (performing), Stage 2 (watch) and Stage 3 (default) for each vintage.
 **Why it matters:** the crisis 2007 book carries ~10% of its life in Stage 2/3 versus ~1.5% for calm 2015 — the staging that drives loss provisions, split by cohort.
 
 ### 4. Vintage tracking — downturn vs calm
-![Cumulative default by months on book for 2007, 2008 and 2015 vintages](reports/figures/vintage_default_curves.png)
+![Cumulative default by months on book for 2007, 2008 and 2015 vintages](outputs/charts/vintage_default_curves.png)
 
 **What this shows:** cumulative default rate as each cohort ages, on a common "months on book" clock.
 **Why it matters:** the 2007 cohort reaches ~4× the cumulative default of 2015 — the clearest demonstration of why vintage monitoring matters.
 
 ### 5. Risk-appetite RAG dashboard (the governance layer)
-![Risk-appetite dashboard: each metric as a percent of its red limit, coloured green/amber/red](reports/figures/appetite_rag_dashboard.png)
+![Risk-appetite dashboard: each metric as a percent of its red limit, coloured green/amber/red](outputs/charts/appetite_rag_dashboard.png)
 
 **What this shows:** each appetite metric scored against its amber (early-warning) and red (limit) thresholds from [config/risk_appetite.yaml](config/risk_appetite.yaml), drawn as a share of its red limit.
 **Why it matters:** this is what makes it *monitoring*, not just reporting — a Board reads the colour, not the table. Limits live in config so a risk owner can change appetite without touching the engine (APS 220 para 20/35).
 
 ### 6. Model backtest — realised default by grade & vintage
-![Grouped bars of realised cumulative default by credit-score grade for each vintage](reports/figures/realised_default_by_grade.png)
+![Grouped bars of realised cumulative default by credit-score grade for each vintage](outputs/charts/realised_default_by_grade.png)
 
 **What this shows:** realised cumulative default by credit-score grade for each vintage — monotonic in grade, and far higher for the crisis cohorts.
 **Why it matters:** this is the **backtest feed** for the sister PD/LGD/EAD model — realised (this monitor) vs predicted (the model), the framework's model-performance layer (Layer 4).
@@ -227,9 +227,9 @@ per month, carrying the delinquency status that everything here is built from.
 ├── outputs/
 │   ├── tables/            # CSV result snapshots (committed)
 │   ├── charts/            # heatmap + vintage curves (committed)
-│   └── report/            # monitoring_pack.md (committed)
+│   └── reports/           # monitoring_pack.md (committed)
 ├── src/monitor.py         # the engine: loaders, bucket/stage logic, transitions, roll rates, governance layer
-├── reports/make_figures.py # regenerates README charts from committed tables
+├── tools/make_figures.py  # regenerates README charts into outputs/charts/
 ├── tools/make_notebooks.py # regenerates the notebooks
 ├── requirements.txt
 └── .gitignore
@@ -243,11 +243,11 @@ pip install -r requirements.txt
 # ".../sample_2015/" (each with sample_orig_YYYY.txt and sample_svcg_YYYY.txt).
 python tools/make_notebooks.py     # (re)generate the notebooks
 jupyter nbconvert --to notebook --execute --inplace notebooks/*.ipynb
-python reports/make_figures.py     # (re)generate README charts from the committed tables
+python tools/make_figures.py     # (re)generate README charts from the committed tables
 ```
 Notebooks 00–01 assemble and cache the loan-month panel once; 02–10 read the cached
 panel and run in seconds, writing tables to `outputs/tables/`, charts to
-`outputs/charts/`, and the Board-style pack to `outputs/report/monitoring_pack.md`.
+`outputs/charts/`, and the Board-style pack to `outputs/reports/monitoring_pack.md`.
 The governance layer (07–10) reads its limits from `config/risk_appetite.yaml`.
 
 ## Relationship to the mortgage credit-risk model

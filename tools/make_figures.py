@@ -1,13 +1,13 @@
 """
-reports/make_figures.py — regenerate the README charts for this repo.
+tools/make_figures.py — regenerate the README charts for this repo.
 
 Every figure is built from the committed result tables in outputs/tables/
 (aggregated transition/migration metrics only — probabilities, shares, rates;
 never loan-level records), so the charts regenerate reproducibly with:
 
-    python reports/make_figures.py
+    python tools/make_figures.py
 
-Outputs PNGs into reports/figures/.
+Outputs PNGs into outputs/charts/.
 """
 from pathlib import Path
 
@@ -19,7 +19,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 TAB = ROOT / "outputs" / "tables"
-FIG = ROOT / "reports" / "figures"
+FIG = ROOT / "outputs" / "charts"
 FIG.mkdir(parents=True, exist_ok=True)
 
 plt.rcParams.update({
