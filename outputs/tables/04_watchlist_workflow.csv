@@ -1,0 +1,4 @@
+stage,trigger,action,owner,timeframe
+Watch,"Stage 2 (SICR) — 30+ DPD backstop, or a forward-looking adverse signal",Increase monitoring frequency; lender's review of the exposure,Credit Risk Analyst (2nd line),Within 30 days
+Heightened risk,"Deteriorating vs prior month, or persistent watch-list status",Restructure / strengthen security / lower limit; confirm staging & ECL,Head of Collections,Within 14 days
+Default,Stage 3 — 90+ DPD or a credit event (unlikely-to-pay where flagged),Move to NPL workout; specific provision; recovery plan,Workout / Collections,Immediate

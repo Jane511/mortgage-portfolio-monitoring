@@ -1,5 +1,11 @@
-metric,current,stressed (x3),red (limit),RAG current,RAG under stress
-NPL ratio (Stage 3 / 90+ share of EAD),0.86,2.58,4.0,GREEN,AMBER
-Stage 2 share of EAD (SICR watch book),1.9,5.71,8.0,GREEN,AMBER
-30->60 roll rate (trailing 12m),15.73,47.19,30.0,GREEN,RED
-"New-delinquency roll (Current->30, trailing 12m)",0.69,2.06,2.0,GREEN,RED
+scenario,metric,current,multiplier,stressed,red (limit),RAG current,RAG stressed
+Moderate downturn,NPL ratio (Stage 3 / 90+ share of EAD),0.86,1.8,1.55,4.0,GREEN,GREEN
+Moderate downturn,Stage 2 share of EAD (SICR watch book),1.9,2.0,3.81,8.0,GREEN,GREEN
+Moderate downturn,Expected-loss rate (bps of EAD),39.3,1.8,70.75,75.0,GREEN,AMBER
+Moderate downturn,30->60 roll rate (trailing 12m),15.73,1.8,28.31,30.0,GREEN,AMBER
+Moderate downturn,"New-delinquency roll (Current->30, trailing 12m)",0.69,1.8,1.24,2.0,GREEN,AMBER
+Severe downturn (GFC-like),NPL ratio (Stage 3 / 90+ share of EAD),0.86,3.0,2.58,4.0,GREEN,AMBER
+Severe downturn (GFC-like),Stage 2 share of EAD (SICR watch book),1.9,3.5,6.67,8.0,GREEN,AMBER
+Severe downturn (GFC-like),Expected-loss rate (bps of EAD),39.3,3.0,117.91,75.0,GREEN,RED
+Severe downturn (GFC-like),30->60 roll rate (trailing 12m),15.73,3.0,47.19,30.0,GREEN,RED
+Severe downturn (GFC-like),"New-delinquency roll (Current->30, trailing 12m)",0.69,3.0,2.06,2.0,GREEN,RED

@@ -108,7 +108,12 @@ save(fig, "vintage_default_curves.png")
 ap = pd.read_csv(TAB / "07_appetite_status.csv")
 RAG_C = {"GREEN": "#1a9850", "AMBER": "#fdae61", "RED": "#b2182b", "n/a": "#9e9e9e"}
 # Each metric on its own 0..red-scaled axis: plot value as % of its red limit so
-# heterogeneous metrics (HHI, %, roll) share one comparable bar.
+# heterogeneous metrics (HHI, %, roll) share one comparable bar. The "% of red"
+# framing only makes sense for higher-is-worse metrics, so lower-is-worse ones
+# (e.g. provision coverage, where a value ABOVE the limit is GOOD) are shown in the
+# pack table, not on this chart.
+if "higher_is_worse" in ap.columns:
+    ap = ap[ap["higher_is_worse"] != False].copy()
 ap = ap.iloc[::-1].reset_index(drop=True)
 pct_of_limit = 100 * ap["this_period"] / ap["red (limit)"]
 amber_of_limit = 100 * ap["amber"] / ap["red (limit)"]

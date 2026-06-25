@@ -1,0 +1,5 @@
+channel,loans,ever_90plus_pct,active_loans,exposure_upb,exposure_share_pct,third_party
+Retail,77857,7.92,8992,995672044.0,57.37,False
+Correspondent,24947,5.67,3506,492281341.0,28.36,True
+Broker,10970,8.96,1127,166512043.0,9.59,True
+Third-party (TPO),36226,17.54,892,81154561.0,4.68,True

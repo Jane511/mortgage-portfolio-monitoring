@@ -19,13 +19,26 @@
 # fitted to this sample (which pools crisis 2007/08 with calm 2015 vintages).
 # =====================================================================
 
+# Risk appetite statement scaffold (APS 220 para 20). The standard distinguishes
+# APPETITE (the risk we plan to operate within — our AMBER level, an early warning)
+# from TOLERANCE (the maximum we are willing to run before mandatory action — our
+# RED level, a hard limit). A red breach escalates to the Board Risk Committee.
+appetite_statement:
+  appetite: "AMBER thresholds — the level of credit risk the ADI plans to operate within; crossing one is an early warning that prompts investigation."
+  tolerance: "RED thresholds — the maximum level of credit risk the ADI is willing to run; a breach is escalated to the Board Risk Committee with mandatory action."
+  tolerance_setting_process: "Thresholds proposed by independent 2nd-line Credit Risk, calibrated to plausible mortgage-book levels and stress results, approved by the Board annually."
+  monitoring_process: "Computed monthly from the loan-month panel; RAG-scored in the Board monitoring pack; leading indicators read before lagging ones."
+  breach_process: "Amber -> investigate and report to Credit Risk Committee; Red -> escalate to Board Risk Committee with a remediation plan and timeframe."
+  review_cycle: "Risk appetite statement reviewed at least annually (next review: 2026-12-31) or on a material change in strategy or environment."
+  last_reviewed: "2025-12-31"
+
 # Limit cascade (stated in words; APS 220 para 35 — appetite cascades down):
 #   Board appetite  ->  portfolio limits (this file)
 #   portfolio       ->  segment sub-limits (e.g. per vintage / per state)
 #   segment         ->  facility-level controls (origination policy, max LVR)
 cascade:
   - "Board: approves the risk appetite statement and the portfolio limits below."
-  - "Portfolio: CRO/credit risk monitors these limits monthly; breaches escalate to the Board Risk Committee."
+  - "Portfolio: independent 2nd-line Credit Risk monitors these limits monthly; breaches escalate to the Board Risk Committee."
   - "Segment: vintage and state sub-limits inherit from the portfolio limits."
   - "Facility: origination policy (max LVR, min score) enforces appetite at the loan level."
 
@@ -36,7 +49,7 @@ metrics:
     red: 4.0
     higher_is_worse: true
     indicator_type: lagging
-    owner: "Head of Credit Risk"
+    owner: "Head of Credit Risk (independent 2nd line)"
     breach_action: "Review provisioning adequacy; deep-dive worst segment; report to Board Risk Committee."
     review_cycle: "Monthly"
     citation: "APS 220 para 30 (asset quality) / IFRS 9 Stage 3"
@@ -46,27 +59,57 @@ metrics:
     red: 8.0
     higher_is_worse: true
     indicator_type: leading
-    owner: "Head of Credit Risk"
+    owner: "Head of Credit Risk (independent 2nd line)"
     breach_action: "Investigate SICR drivers; confirm staging/ECL; tighten watchlist cadence."
     review_cycle: "Monthly"
     citation: "APS 220 para 30 / IFRS 9 SICR"
+  loss_rate:
+    label: "Expected-loss rate (bps of EAD)"
+    amber: 50.0
+    red: 75.0
+    higher_is_worse: true
+    indicator_type: lagging
+    owner: "Head of Credit Risk (independent 2nd line)"
+    breach_action: "Reassess ECL adequacy and pricing-for-risk; report EL trajectory to Board Risk Committee."
+    review_cycle: "Monthly"
+    citation: "APG 220 para 67(b) (provision/loss metrics) / APS 220 para 30"
+  provision_coverage:
+    label: "NPL provision coverage (ECL / Stage 3 exposure, %)"
+    amber: 35.0
+    red: 25.0
+    higher_is_worse: false
+    indicator_type: lagging
+    owner: "Head of Credit Risk (independent 2nd line)"
+    breach_action: "Reassess ECL staging and LGD assumptions; check for coverage drift vs rising NPLs."
+    review_cycle: "Monthly"
+    citation: "APG 220 para 67(b) (provision coverage ratios)"
   high_lvr_share:
     label: "High-LVR book share (original LVR > 90% of EAD)"
     amber: 15.0
     red: 25.0
     higher_is_worse: true
     indicator_type: leading
-    owner: "Head of Mortgage Lending"
-    breach_action: "Tighten origination LVR policy; review LMI coverage; report concentration to Board."
+    owner: "Head of Credit Risk (independent 2nd line)"
+    breach_action: "Tighten origination LVR policy; review LMI coverage; report concentration to Board. Remediation executed by Mortgage Lending."
     review_cycle: "Quarterly"
     citation: "APS 220 para 35 (higher-risk products)"
+  current_high_lvr_share:
+    label: "Current/indexed high-LVR share (current LVR > 90% of EAD)"
+    amber: 10.0
+    red: 18.0
+    higher_is_worse: true
+    indicator_type: leading
+    owner: "Head of Credit Risk (independent 2nd line)"
+    breach_action: "Reassess collateral coverage and LMI; stress regional HPI; review provisioning on negative-equity loans."
+    review_cycle: "Quarterly"
+    citation: "Basel CRE36.140 (continuous collateral monitoring)"
   top_state_share:
     label: "Geographic concentration (top-state exposure share)"
     amber: 20.0
     red: 30.0
     higher_is_worse: true
     indicator_type: lagging
-    owner: "Head of Credit Risk"
+    owner: "Head of Credit Risk (independent 2nd line)"
     breach_action: "Review geographic limit; assess regional stress; consider new-business steering."
     review_cycle: "Quarterly"
     citation: "APS 220 para 35 (geographic concentration)"
@@ -76,7 +119,7 @@ metrics:
     red: 2500
     higher_is_worse: true
     indicator_type: lagging
-    owner: "Head of Credit Risk"
+    owner: "Head of Credit Risk (independent 2nd line)"
     breach_action: "Review geographic diversification; set/refresh state sub-limits."
     review_cycle: "Quarterly"
     citation: "APS 220 para 35 (concentration)"
@@ -101,11 +144,57 @@ metrics:
     review_cycle: "Monthly"
     citation: "APG 220 para 66 (forward-looking indicators)"
 
-# Downturn multiplier for the stress->limits link (MON-7 / APS 220 para 73).
-# Reuses the sister model's crisis severity: the 2007 cohort reaches ~4x the
-# cumulative default of the calm 2015 cohort, so a 3x stress on the flow/quality
-# metrics is a conservative-but-grounded downturn proxy.
+# Illustrative IFRS 9 ECL coverage rates by stage (blended PD x LGD), used to turn
+# stage exposures into a provision figure, an expected-loss rate (bps) and an NPL
+# coverage ratio (APG 220 para 67(b)). Demo values — not fitted to this sample.
+ecl:
+  coverage_rates:
+    "Stage 1": 0.001
+    "Stage 2": 0.02
+    "Stage 3": 0.30
+
+# Early-warning / problem-exposure WORKFLOW (APS 220 para 33; APG 220 para 63).
+# Each trigger raises a watchlist item with an action, an accountable owner and an
+# escalation timeframe — the Step-8 workflow the watchlist feeds.
+watchlist_workflow:
+  - stage: "Watch"
+    trigger: "Stage 2 (SICR) — 30+ DPD backstop, or a forward-looking adverse signal"
+    action: "Increase monitoring frequency; lender's review of the exposure"
+    owner: "Credit Risk Analyst (2nd line)"
+    timeframe: "Within 30 days"
+  - stage: "Heightened risk"
+    trigger: "Deteriorating vs prior month, or persistent watch-list status"
+    action: "Restructure / strengthen security / lower limit; confirm staging & ECL"
+    owner: "Head of Collections"
+    timeframe: "Within 14 days"
+  - stage: "Default"
+    trigger: "Stage 3 — 90+ DPD or a credit event (unlikely-to-pay where flagged)"
+    action: "Move to NPL workout; specific provision; recovery plan"
+    owner: "Workout / Collections"
+    timeframe: "Immediate"
+
+# Stress -> limits link (MON-7 / APS 220 paras 73, 76). Per-metric multipliers
+# (richer than one flat scalar) reflect that watch/roll FLOW metrics move more in a
+# downturn than the NPL STOCK — grounded in this repo's own vintage curves (2007
+# reaches ~4x the cumulative default of calm 2015 at 72 months on book). Two
+# scenarios so the Board sees a graded picture, not a single point.
 stress:
-  downturn_multiplier: 3.0
-  applies_to: [npl_ratio, stage2_share, roll_30_60, roll_current_30]
-  note: "Grounded in this repo's own vintage curves: 2007 cumulative default ~4x 2015 at 72 months on book."
+  note: "Per-metric downturn multipliers grounded in this repo's 2007-vs-2015 vintage ratios (2007 cumulative default ~4x 2015 at 72 months on book)."
+  validation_note: "Stress multipliers are illustrative and would be independently validated per APS 220 para 76 before use in limit setting."
+  scenarios:
+    moderate:
+      label: "Moderate downturn"
+      multipliers:
+        npl_ratio: 1.8
+        stage2_share: 2.0
+        loss_rate: 1.8
+        roll_30_60: 1.8
+        roll_current_30: 1.8
+    severe:
+      label: "Severe downturn (GFC-like)"
+      multipliers:
+        npl_ratio: 3.0
+        stage2_share: 3.5
+        loss_rate: 3.0
+        roll_30_60: 3.0
+        roll_current_30: 3.0

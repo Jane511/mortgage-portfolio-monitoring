@@ -114,8 +114,11 @@ panel = m.build_panel()                 # one row per loan per month (+ bucket, 
 panel = m.add_transitions(panel)        # + next_bucket / next_stage (terminal events folded in)
 print(f"{len(panel):,} loan-months  |  {panel.loan_seq.nunique():,} loans")'''
 c01_3 = '''# Join a few origination attributes used downstream ----------------------
+# occupancy / loan_purpose / channel back the higher-risk-product concentration
+# (APS 220 para 35) and third-party-originator monitoring (APS 220 para 39).
 orig = pd.concat([m.load_orig(v) for v in m.VINTAGES], ignore_index=True)
-keep = ["loan_seq", "vintage", "prop_state", "orig_upb", "credit_score", "dti", "ltv", "first_pmt_date"]
+keep = ["loan_seq", "vintage", "prop_state", "orig_upb", "credit_score", "dti", "ltv",
+        "first_pmt_date", "occupancy", "loan_purpose", "channel"]
 panel = panel.merge(orig[keep], on=["loan_seq", "vintage"], how="left")
 panel.to_parquet(m.PROC_DIR / "panel.parquet", index=False)
 print("cached ->", m.PROC_DIR / "panel.parquet")'''
@@ -268,8 +271,22 @@ print(f"{len(latest):,} active loans at latest observation")'''
 c04_3 = '''# Watchlist: Stage 2/3 now, or deteriorating this month ------------------
 watch = latest[(latest.stage.isin(["Stage 2", "Stage 3"])) | (latest.deteriorating)].copy()
 watch["loan_id"] = m.mask_loan_id(watch["loan_seq"])
+
+# Attach the early-warning TRIGGER reason — the criterion that put each loan on the
+# list (APS 220 para 33; APG 220 para 63). This is what turns a flat list into a
+# workflow: each trigger maps to an action/owner/timeframe (config: watchlist_workflow).
+def _trigger(r):
+    if r["stage"] == "Stage 3":
+        return "Stage 3 - default / credit-impaired"
+    if r["deteriorating"] and r["stage"] == "Stage 2":
+        return "SICR - entered watch (30+ DPD)"
+    if r["deteriorating"]:
+        return "Deteriorating vs prior month"
+    return "Stage 2 - on watch"
+watch["trigger"] = watch.apply(_trigger, axis=1)
+
 watch = watch.sort_values(["bucket_rank", "cur_upb"], ascending=False)
-cols = ["loan_id", "vintage", "prop_state", "period", "bucket", "stage",
+cols = ["loan_id", "vintage", "prop_state", "period", "bucket", "stage", "trigger",
         "deteriorating", "loan_age", "cur_upb", "credit_score", "ltv"]
 watch = watch[cols]
 print(f"watchlist: {len(watch):,} loans  |  exposure on watch: ${watch.cur_upb.sum()/1e6:,.1f}m")
@@ -279,13 +296,26 @@ wsumm = (watch.groupby(["vintage", "stage"])
          .agg(loans=("loan_id", "size"), exposure_upb=("cur_upb", "sum"))
          .reset_index())
 wsumm["exposure_upb"] = wsumm["exposure_upb"].round(0)
+# Trigger mix — how many loans each early-warning criterion raised.
+tsumm = (watch.groupby("trigger").agg(loans=("loan_id", "size"),
+         exposure_upb=("cur_upb", "sum")).reset_index().sort_values("loans", ascending=False))
+tsumm["exposure_upb"] = tsumm["exposure_upb"].round(0)
 watch.to_csv(m.OUT_TABLES / "04_watchlist.csv", index=False)
 wsumm.to_csv(m.OUT_TABLES / "04_watchlist_summary.csv", index=False)
-print("saved watchlist + summary"); wsumm'''
+tsumm.to_csv(m.OUT_TABLES / "04_watchlist_triggers.csv", index=False)
+print("saved watchlist + summary + trigger mix"); wsumm'''
+c04_5 = '''# The early-warning WORKFLOW: trigger -> action -> owner -> timeframe -----
+# APS 220 para 33 / APG 220 para 63 expect documented criteria and a timely
+# response. The workflow stages live in config/risk_appetite.yaml (watchlist_workflow).
+cfg = m.load_appetite()
+wf = pd.DataFrame(cfg["watchlist_workflow"])
+wf.to_csv(m.OUT_TABLES / "04_watchlist_workflow.csv", index=False)
+wf'''
 
 save("04_early_warning_watchlist.ipynb", nb(
     new_markdown_cell(md04),
-    new_code_cell(c04_1), new_code_cell(c04_2), new_code_cell(c04_3), new_code_cell(c04_4),
+    new_code_cell(c04_1), new_code_cell(c04_2), new_code_cell(c04_3),
+    new_code_cell(c04_4), new_code_cell(c04_5),
 ))
 
 # ===========================================================================
@@ -346,20 +376,25 @@ save("05_vintage_tracking.ipynb", nb(
 # ===========================================================================
 # 06 — Concentration & monitoring-pack report
 # ===========================================================================
-md06 = """# 06 — Concentration (geography, HHI, high-LVR)
+md06 = """# 06 — Concentration (geography, HHI, high-LVR, product mix & channel)
 
 **Plain English:** Where is the risk *concentrated*? We slice exposure and
 default by geography (state) and by vintage, add the **HHI** (a single
-concentration number) for the state book, and a **high-LVR concentration** view
-(exposure by original loan-to-value band). Concentration is a portfolio risk in
-its own right (APS 220 para 35) — these tables feed both the appetite limits
-(notebook 07) and the monitoring pack.
+concentration number) for the state book, a **high-LVR concentration** view
+(exposure by original loan-to-value band), the **product mix** (owner-occupier vs
+investor, and loan purpose), and **acquisition channel** (retail vs broker /
+correspondent / TPO). Concentration is a portfolio risk in its own right
+(APS 220 para 35), and APRA expects higher-risk products and third-party-originated
+loans to be watched specifically (APS 220 paras 35(b)/39) — these tables feed both
+the appetite limits (notebook 07) and the monitoring pack.
 
 **One-line terms**
 - **Concentration** — how exposure clusters in a few states / cohorts / risky products; a portfolio risk in itself.
 - **Exposure (UPB)** — current unpaid principal balance, i.e. money still at risk.
 - **HHI** — Herfindahl–Hirschman Index, Σ(share %)² on a 0–10,000 scale; <1500 low · 1500–2500 moderate · >2500 high.
 - **High-LVR** — loans whose *original* loan-to-value was above 90% (a higher-risk product, APS 220 para 35).
+- **Product mix** — owner-occupier / investor / second-home (occupancy) and purchase / cash-out / no-cash refi (purpose); investor and cash-out are higher-risk products (APS 220 para 35(b)).
+- **Channel** — how the loan was originated: Retail (lender's own desk) vs Broker / Correspondent / TPO (third party). Third-party loans get enhanced monitoring (APS 220 para 39; APG 220 paras 307–308).
 - **APS 330-style** — laid out like an APRA APS 330 credit-risk disclosure table. *Format only — illustrative, not a regulatory submission.*"""
 
 c06_1 = BOOT + '''
@@ -415,11 +450,49 @@ high_lvr_share = float(lvr.loc[lvr.index.isin([">95", "90-95"]), "exposure_share
 print(f"High-LVR (original LVR > 90%) share of exposure: {high_lvr_share:.2f}%")
 lvr.round(2).to_csv(m.OUT_TABLES / "06_concentration_lvr.csv")
 lvr.round(2)'''
+c06_6 = '''# Higher-risk PRODUCT concentration: occupancy & loan purpose (APS 220 35b) --
+# Investor and cash-out-refi lending are higher-risk products APRA expects to be
+# limited and watched separately (worked example 5.1). The raw file carries both
+# fields; here we turn them into the same concentration view as geography.
+occ = m.category_concentration(active, "occupancy", m.OCCUPANCY_LABEL)
+purpose = m.category_concentration(active, "loan_purpose", m.PURPOSE_LABEL)
+occ.round(2).to_csv(m.OUT_TABLES / "06_concentration_occupancy.csv")
+purpose.round(2).to_csv(m.OUT_TABLES / "06_concentration_purpose.csv")
+inv_share = float(occ.loc[occ.index == "Investor", "exposure_share_pct"].sum())
+print(f"Investor-mortgage share of exposure: {inv_share:.2f}%")
+occ.round(2)'''
+c06_7 = '''# Third-party / channel monitoring (APS 220 para 39; APG 220 307-308) --------
+# Loans originated through brokers / correspondents / TPO are made away from the
+# lender's own desk, so APRA expects their performance to be tracked separately
+# from retail. Lifetime ever-90+/default by channel + current exposure share.
+chan = m.channel_performance(panel, active)
+chan.to_csv(m.OUT_TABLES / "06_channel_performance.csv", index=False)
+tp = chan.loc[chan.third_party, "exposure_share_pct"].sum()
+print(f"Third-party-originated (broker/correspondent/TPO) share of exposure: {tp:.2f}%")
+chan'''
+c06_8 = '''# Current / indexed-LVR concentration (Basel CRE36.140) ------------------
+# Origination LVR is a static snapshot; continuous collateral monitoring needs
+# CURRENT LVR, marking each property to market with the (illustrative) HPI path in
+# monitor.py. Crisis-vintage survivors lever UP early; calm-vintage survivors
+# de-lever as prices rise — so the current-LVR book differs from the original one.
+cur_lvr = m.current_lvr_concentration(active)
+cur_high = float(cur_lvr.loc[cur_lvr.index.isin([">95", "90-95"]), "exposure_share_pct"].sum())
+print(f"Current/indexed high-LVR (>90%) share: {cur_high:.2f}%  "
+      f"(vs {high_lvr_share:.2f}% on the original-LVR basis)")
+cur_lvr.round(2).to_csv(m.OUT_TABLES / "06_concentration_current_lvr.csv")
+cur_lvr.round(2)'''
+c06_9 = '''# Single-name / large-exposure concentration (APG 220 paras 77-80) -------
+# Expected to be immaterial for a granular RETAIL mortgage pool (no single borrower
+# dominates) — reported so the large-exposure dimension is not silently omitted.
+topn = m.topn_concentration(active)
+topn.to_csv(m.OUT_TABLES / "06_concentration_topn.csv", index=False)
+topn'''
 
 save("06_concentration_report.ipynb", nb(
     new_markdown_cell(md06),
     new_code_cell(c06_1), new_code_cell(c06_2), new_code_cell(c06_3),
-    new_code_cell(c06_4), new_code_cell(c06_5),
+    new_code_cell(c06_4), new_code_cell(c06_5), new_code_cell(c06_6),
+    new_code_cell(c06_7), new_code_cell(c06_8), new_code_cell(c06_9),
 ))
 
 # ===========================================================================
@@ -456,8 +529,9 @@ def _prev(p):
     return (y - 1) * 100 + 12 if mn == 1 else p - 1
 last_period = _prev(this_period) if _prev(this_period) in set(periods) else periods[-2]
 
-this_vals = m.portfolio_metrics_asof(panel, this_period)
-last_vals = m.portfolio_metrics_asof(panel, last_period)
+cov = cfg.get("ecl", {}).get("coverage_rates")
+this_vals = m.portfolio_metrics_asof(panel, this_period, coverage=cov)
+last_vals = m.portfolio_metrics_asof(panel, last_period, coverage=cov)
 appetite = m.evaluate_appetite(cfg, this_vals, last_vals)
 appetite.to_csv(m.OUT_TABLES / "07_appetite_status.csv", index=False)
 print(f"this period {this_period} vs last period {last_period}")
@@ -484,32 +558,39 @@ trend = pd.DataFrame([{
 } for p in anchors])
 trend.to_csv(m.OUT_TABLES / "07_leading_trends.csv", index=False)
 trend'''
-c07_4 = '''# Stress -> limits: would a downturn breach the limits? (MON-7) ----------
-# APS 220 para 73 / APG 220 para 76. Reuse the sister model's crisis severity
-# (this repo's own vintage curves: 2007 ~4x 2015 default at 72m) as a downturn
-# multiplier, and re-test the stressed metrics against their red limits.
-mult = cfg["stress"]["downturn_multiplier"]
-rows = []
-for k in cfg["stress"]["applies_to"]:
-    c = cfg["metrics"][k]
-    cur = this_vals.get(k, float("nan"))
-    stressed = cur * mult
-    rows.append({
-        "metric": c["label"],
-        "current": round(cur, 2),
-        f"stressed (x{mult:g})": round(stressed, 2),
-        "red (limit)": c["red"],
-        "RAG current": m.rag(cur, c["amber"], c["red"]),
-        "RAG under stress": m.rag(stressed, c["amber"], c["red"]),
-    })
-stress = pd.DataFrame(rows)
+c07_4 = '''# Stress -> limits: graded downturn scenarios (MON-7) -------------------
+# APS 220 paras 73/76. Per-metric multipliers (config) reflect that watch/roll FLOW
+# metrics move more than the NPL STOCK in a downturn — grounded in this repo's
+# 2007-vs-2015 vintage ratios. Two scenarios give the Board a graded picture.
+stress_frames = []
+for scen in ["moderate", "severe"]:
+    s = m.stress_table(this_vals, cfg, scen)
+    s.insert(0, "scenario", cfg["stress"]["scenarios"][scen]["label"])
+    stress_frames.append(s)
+stress = pd.concat(stress_frames, ignore_index=True)
 stress.to_csv(m.OUT_TABLES / "07_stress_vs_limits.csv", index=False)
-print(f"downturn multiplier x{mult:g} — {cfg['stress']['note']}")
+print(cfg["stress"]["note"])
 stress'''
+c07_5 = '''# Limit utilisation / headroom (monthly analog of DAILY limit monitoring) -
+# APS 113 Att.D EAD para 6 / Basel CRE36.92 require DAILY facility/limit-excess
+# monitoring; the true daily layer is described in docs/governance.md. Here we show
+# how much of each limit is used and the headroom left at the reporting date.
+util = m.limit_utilisation(cfg, this_vals)
+util.to_csv(m.OUT_TABLES / "07_limit_utilisation.csv", index=False)
+util'''
+c07_6 = '''# IFRS 9 ECL provision & coverage ratio (APG 220 para 67(b)) ------------
+# Provision coverage is a required forward-looking indicator. Stage exposures x the
+# (illustrative) config coverage rates -> ECL, the expected-loss rate (bps) and the
+# NPL coverage ratio. These also feed the loss_rate / provision_coverage RAG metrics.
+book = m.book_asof(panel, this_period)
+ecl = m.ecl_table(book, cov)
+ecl.to_csv(m.OUT_TABLES / "07_ecl_provisions.csv", index=False)
+ecl'''
 
 save("07_risk_appetite_limits.ipynb", nb(
     new_markdown_cell(md07),
-    new_code_cell(c07_1), new_code_cell(c07_2), new_code_cell(c07_3), new_code_cell(c07_4),
+    new_code_cell(c07_1), new_code_cell(c07_2), new_code_cell(c07_3),
+    new_code_cell(c07_4), new_code_cell(c07_5), new_code_cell(c07_6),
 ))
 
 # ===========================================================================
@@ -556,10 +637,35 @@ scal.to_csv(m.OUT_TABLES / "08_collections_scalability.csv", index=False)
 mod_view.to_csv(m.OUT_TABLES / "08_modified_exposure.csv", index=False)
 print("saved modified-exposure + collections-scalability tables")
 scal'''
+c08_4 = '''# Hardship / concession outcomes incl. ULTIMATE loss (APG 220 para 68) ---
+# Beyond cure vs re-default, the guidance asks for ultimate loss on the concession
+# book — here proxied by the share that reached an actual Default credit-event
+# termination (charge-off / short-sale / REO).
+hardship = m.hardship_summary(panel)
+hardship.to_csv(m.OUT_TABLES / "08_hardship_summary.csv", index=False)
+hardship'''
+c08_5 = '''# Trend in NEW concession requests by year & product (APG 220 para 68) ---
+# APRA expects the NUMBER of new requests by product type to be tracked. Note: the
+# SFLLD records GRANTED concessions only, so an approval RATE is not observable here.
+new_conc = m.new_concessions_by_year(panel)
+new_conc.to_csv(m.OUT_TABLES / "08_new_concessions_by_year.csv", index=False)
+new_conc'''
+c08_6 = '''# Unlikely-to-pay (UTP) overlay (APS 220 default definition) -------------
+# Stage 3 here uses the 90-DPD / credit-event backstop only. APRA's default is
+# 90 DPD *or* unlikely-to-pay; as an illustrative UTP signal we flag ever-modified
+# loans still performing (<90 DPD) and on book. Production would fold qualitative
+# UTP triggers into the default definition; here it is an extra early-warning count.
+latest = panel.sort_values(["loan_seq", "mob"]).groupby("loan_seq").tail(1)
+active = latest[latest.zb_code.isna()].copy()
+utp_tbl = pd.DataFrame([m.utp_overlay(panel, active)])
+utp_tbl.to_csv(m.OUT_TABLES / "08_utp_overlay.csv", index=False)
+print("UTP overlay (illustrative early-warning):")
+utp_tbl'''
 
 save("08_problem_exposures.ipynb", nb(
     new_markdown_cell(md08),
     new_code_cell(c08_1), new_code_cell(c08_2), new_code_cell(c08_3),
+    new_code_cell(c08_4), new_code_cell(c08_5), new_code_cell(c08_6),
 ))
 
 # ===========================================================================
@@ -611,10 +717,22 @@ grade = (ever.groupby(["grade", "vintage"], observed=False)["d"]
 grade.to_csv(m.OUT_TABLES / "09_realised_default_by_grade.csv")
 print("realised cumulative default rate (%) by score grade x vintage:")
 grade'''
+c09_4 = '''# Validation — is the leading indicator PREDICTIVE? (APG 113 para 140, el.3) --
+# Element 3 (Performance) of the 8-element validation framework: a monitoring metric
+# is only useful if it actually leads losses. Loans that entered Stage 2 (SICR)
+# within their first 12 months default (reach Stage 3 ever) at a far higher rate than
+# those that did not — evidence the watch trigger is forward-looking, not lagging.
+pred = m.sicr_predictiveness(panel)
+pred.to_csv(m.OUT_TABLES / "09_validation_predictiveness.csv", index=False)
+lift = pred.set_index("entered_stage2_by_12m")["eventual_default_pct"]
+if {True, False} <= set(lift.index):
+    print(f"SICR predictiveness: entered Stage 2 by 12m -> {lift[True]:.1f}% eventual default "
+          f"vs {lift[False]:.1f}% if not  (lift x{lift[True]/max(lift[False],0.01):.1f})")
+pred'''
 
 save("09_model_performance_psi.ipynb", nb(
     new_markdown_cell(md09),
-    new_code_cell(c09_1), new_code_cell(c09_2), new_code_cell(c09_3),
+    new_code_cell(c09_1), new_code_cell(c09_2), new_code_cell(c09_3), new_code_cell(c09_4),
 ))
 
 # ===========================================================================
@@ -648,10 +766,23 @@ vint     = pd.read_csv(T / "05_vintage_cumulative_default.csv")
 state    = pd.read_csv(T / "06_concentration_state.csv", index_col=0)
 hhi_tbl  = pd.read_csv(T / "06_concentration_hhi.csv")
 lvr      = pd.read_csv(T / "06_concentration_lvr.csv", index_col=0)
+occ      = pd.read_csv(T / "06_concentration_occupancy.csv", index_col=0)
+purpose  = pd.read_csv(T / "06_concentration_purpose.csv", index_col=0)
+chan     = pd.read_csv(T / "06_channel_performance.csv")
 mod_view = pd.read_csv(T / "08_modified_exposure.csv")
 scal     = pd.read_csv(T / "08_collections_scalability.csv")
 psi_tbl  = pd.read_csv(T / "09_psi.csv")
 grade    = pd.read_csv(T / "09_realised_default_by_grade.csv", index_col=0)
+util     = pd.read_csv(T / "07_limit_utilisation.csv")
+ecl      = pd.read_csv(T / "07_ecl_provisions.csv")
+cur_lvr  = pd.read_csv(T / "06_concentration_current_lvr.csv", index_col=0)
+topn     = pd.read_csv(T / "06_concentration_topn.csv")
+wf       = pd.read_csv(T / "04_watchlist_workflow.csv")
+tsumm    = pd.read_csv(T / "04_watchlist_triggers.csv")
+hardship = pd.read_csv(T / "08_hardship_summary.csv")
+new_conc = pd.read_csv(T / "08_new_concessions_by_year.csv")
+utp_tbl  = pd.read_csv(T / "08_utp_overlay.csv")
+pred     = pd.read_csv(T / "09_validation_predictiveness.csv")
 
 worst = appetite.RAG.map({"GREEN": 0, "AMBER": 1, "RED": 2, "n/a": 0}).max()
 overall = {0: "GREEN", 1: "AMBER", 2: "RED"}[int(worst)]
@@ -683,8 +814,26 @@ else:
     add("_All metrics within appetite this period — no escalations required._\n")
 add("**Forward-looking view:** leading indicators (Stage 2 share, roll rates, SICR) "
     "are read first because they move before losses; the vintage curves (section 7) show "
-    "how fast a downturn cohort can deteriorate, and the stress test (section 10) shows "
-    "the same metrics against their limits under a downturn multiple.\n")
+    "how fast a downturn cohort can deteriorate, and the stress test (section 11) shows "
+    "the same metrics against their limits under graded downturn scenarios.\n")
+add("**Appetite vs tolerance (APS 220 para 20):** the *amber* level is the risk appetite "
+    "(an early warning); the *red* level is the risk tolerance (a hard limit). Amber -> "
+    "investigate; red -> escalate to the Board Risk Committee. The appetite statement is "
+    "reviewed at least annually (see `config/risk_appetite.yaml`).\n")
+
+# --- 1b. IFRS 9 ECL / provision coverage (APG 220 para 67(b)) ---------------
+add("### Provisions & expected loss (APG 220 para 67(b))\n")
+add("Illustrative IFRS 9 ECL from stage exposures x config coverage rates; the EL rate "
+    "and NPL coverage ratio also drive the `loss_rate` / `provision_coverage` RAG metrics.\n")
+add(ecl.to_markdown(index=False) + "\n")
+
+# --- 1c. Limit utilisation / headroom (daily-layer analog) ------------------
+add("### Limit utilisation & headroom\n")
+add("How much of each limit is used at the reporting date, and the headroom remaining. "
+    "This is the MONTHLY analog of the DAILY facility/limit-excess monitoring APS 113 "
+    "Att. D (EAD para 6) / Basel CRE36.92 require — the daily layer is described in "
+    "`docs/governance.md`.\n")
+add(util.to_markdown(index=False) + "\n")
 
 # --- 2. Leading-indicator trends (MON-3) ------------------------------------
 add("## 2. Leading-indicator trends (forward-looking)\n")
@@ -704,12 +853,18 @@ add("## 5. IFRS 9 stage movements (loan-months)  _(mixed)_\n")
 add(moves.to_markdown(index=False) + "\n")
 add("## 6. Early-warning watchlist (by vintage / stage)  _(leading)_\n")
 add(wsumm.to_markdown(index=False) + "\n")
+add("**Trigger mix** — the early-warning criterion that raised each watchlist item "
+    "(APS 220 para 33; APG 220 para 63):\n")
+add(tsumm.to_markdown(index=False) + "\n")
+add("**Problem-exposure workflow** — each trigger maps to an action, an accountable "
+    "owner and an escalation timeframe (config: `watchlist_workflow`):\n")
+add(wf.to_markdown(index=False) + "\n")
 add("## 7. Vintage tracking — cumulative default by months on book  _(lagging)_\n")
 add(vint.to_markdown(index=False) + "\n")
 add("![vintage curves](../charts/05_vintage_default_curves.png)\n")
 
-# --- 8. Concentration: state + HHI + LVR (MON-4) ----------------------------
-add("## 8. Concentration — geography, HHI & high-LVR (APS 220 para 35)\n")
+# --- 8. Concentration: state + HHI + LVR + product + channel (MON-4) ---------
+add("## 8. Concentration — geography, HHI, high-LVR, product mix & channel (APS 220 paras 35/39)\n")
 add("_Format only — illustrative, not a regulatory submission._\n")
 add("**By state (top 10):**\n")
 add(state.head(10).round(2).to_markdown() + "\n")
@@ -717,6 +872,25 @@ add("**Geographic HHI:**\n")
 add(hhi_tbl.to_markdown(index=False) + "\n")
 add("**High-LVR concentration (by original LVR band):**\n")
 add(lvr.round(2).to_markdown() + "\n")
+add("**Product mix — occupancy (higher-risk product; APS 220 para 35(b)):** investor "
+    "lending is watched separately from owner-occupier.\n")
+add(occ.round(2).to_markdown() + "\n")
+add("**Product mix — loan purpose:** cash-out refinances carry higher risk than purchase "
+    "or no-cash-out refinances.\n")
+add(purpose.round(2).to_markdown() + "\n")
+add("**Acquisition channel — third-party-originator monitoring (APS 220 para 39; "
+    "APG 220 paras 307-308):** broker / correspondent / TPO loans are originated away from "
+    "the lender's own desk, so their lifetime default experience is tracked separately from "
+    "retail.\n")
+add(chan.to_markdown(index=False) + "\n")
+add("**Current / indexed-LVR concentration (continuous collateral monitoring; Basel "
+    "CRE36.140):** origination LVR is static, so the live collateral view marks each "
+    "property to market via an illustrative HPI path — the marked-to-market counterpart of "
+    "the original-LVR table above.\n")
+add(cur_lvr.round(2).to_markdown() + "\n")
+add("**Single-name / large-exposure concentration (APG 220 paras 77-80):** immaterial for "
+    "a granular retail mortgage pool — reported so the dimension is not silently omitted.\n")
+add(topn.to_markdown(index=False) + "\n")
 
 # --- 9. Problem exposures (MON-5) -------------------------------------------
 add("## 9. Problem exposures — modifications & collections scalability (APS 220 para 79)\n")
@@ -725,6 +899,18 @@ add(mod_view.to_markdown(index=False) + "\n")
 add("Collections scalability — trough vs crisis-peak monthly arrears (30+DPD) rate; "
     "the surge multiple is the load the workout function must be able to absorb:\n")
 add(scal.to_markdown(index=False) + "\n")
+add("**Hardship / concession outcomes incl. ultimate loss (APG 220 para 68):** cure, "
+    "re-default and the share that reached an actual Default credit event (ultimate-loss "
+    "proxy):\n")
+add(hardship.to_markdown(index=False) + "\n")
+add("**Trend in new concession requests by year & product:** (the SFLLD records granted "
+    "concessions only, so an approval rate is not observable):\n")
+add(new_conc.to_markdown(index=False) + "\n")
+add("**Unlikely-to-pay (UTP) overlay (APS 220 default definition):** Stage 3 uses the "
+    "90-DPD/credit-event backstop only; this flags ever-modified loans still performing as "
+    "an illustrative UTP early-warning (production would fold UTP into the default "
+    "definition):\n")
+add(utp_tbl.to_markdown(index=False) + "\n")
 
 # --- 10. Model performance / PSI (MON-6) ------------------------------------
 add("## 10. Model performance — population stability (PSI) & backtest feed\n")
@@ -734,18 +920,38 @@ add("Layer 4 (rating-system performance). PSI of origination features vs the cal
 add(psi_tbl.to_markdown(index=False) + "\n")
 add("Realised cumulative default (%) by credit-score grade x vintage:\n")
 add(grade.to_markdown() + "\n")
+add("**Validation — is the leading indicator predictive? (APG 113 para 140, element 3 "
+    "'Performance'):** loans that entered Stage 2 (SICR) within their first 12 months "
+    "default at a far higher rate than those that did not — evidence the watch trigger "
+    "leads losses rather than lagging them. Full 8-element validation in `docs/validation.md`.\n")
+add(pred.to_markdown(index=False) + "\n")
 
 # --- 11. Governance / stress / disclosure notes (MON-7/8/9) -----------------
 add("## 11. Governance, stress & disclosure notes\n")
-add("**Stress -> limits (MON-7; APS 220 para 73 / APG 220 para 76).** Applying a "
-    "downturn multiple (grounded in this repo's own vintage curves — 2007 reaches ~4x "
-    "2015 default) to the flow/quality metrics re-tests them against their limits:\n")
+add("**Stress -> limits (MON-7; APS 220 paras 73/76).** Per-metric downturn multipliers "
+    "(config) re-test the flow/quality metrics against their limits under two graded "
+    "scenarios — watch/roll FLOW metrics move more than the NPL STOCK, grounded in this "
+    "repo's 2007-vs-2015 vintage ratios. Multipliers are illustrative and would be "
+    "independently validated before use (APS 220 para 76):\n")
 add(stress.to_markdown(index=False) + "\n")
-add("**Governance & independent validation (MON-8; APS 220 paras 28/75-76; APG 113 para 140).** "
-    "Reporting cadence: the watchlist and roll rates go monthly to the Credit Risk Committee; "
-    "the appetite RAG dashboard and concentration go monthly to the Board Risk Committee; "
-    "the PSI/model-performance layer goes at least annually to model governance. The monitoring "
-    "framework itself would be **independently validated annually**. _Demo, not a production system._\n")
+add("**Independence (Basel CRE36.57 / APS 220 para 28).** Monitoring and the appetite "
+    "limits are owned by an independent 2nd-line Credit Risk function, functionally separate "
+    "from mortgage origination; remediation actions are executed by the business but "
+    "overseen by Credit Risk. See `docs/governance.md`.\n")
+add("**Reporting cadence (Step 12).** Front-line: daily/weekly limit-excess & arrears flow; "
+    "Credit Risk Committee: monthly watchlist, roll rates, trigger mix; Board Risk Committee: "
+    "monthly appetite RAG, concentration, provisions; model governance: at least annually "
+    "(PSI / validation); Audit Committee: quarterly independent assurance. Full forum table "
+    "in `docs/governance.md`.\n")
+add("**Independent validation (MON-8; APG 113 para 140).** The monitoring framework is "
+    "subject to the 8-element validation framework, evidenced by the predictiveness test in "
+    "section 10 (element 3) and the data-quality reconciliation (nb 00). Full 8-element "
+    "assessment in `docs/validation.md`; the framework would be independently validated "
+    "annually. _Demo, not a production system._\n")
+add("**Scope (Step 5 / sections 4.3-4.4).** Rating-refresh cadence (annual; Basel CRE36.41) "
+    "lives in the sister PD/LGD/EAD model — a PSI breach here (section 10) triggers a refresh. "
+    "Country/transfer risk (single-country US book) and purchased-receivables seller/servicer "
+    "monitoring are out of scope for this own-book demo (see `docs/governance.md`).\n")
 add("**APS 330 / Pillar 3 framing (MON-9).** The concentration and credit-quality outputs "
     "(sections 7-8) are the inputs that feed **Pillar 3 (APS 330)** credit-risk disclosure. "
     "Any APS 330-style table here is **format only — illustrative, not a regulatory submission**.\n")

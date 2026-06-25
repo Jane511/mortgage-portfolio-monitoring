@@ -1,279 +1,290 @@
-# Loan-Level Portfolio Monitor — transition matrices, IFRS 9 staging, early warning & vintage tracking
+# Mortgage Portfolio Monitoring — a working credit-risk monitoring programme, mapped to APRA & Basel rules
 
-> **In one line:** A monthly credit-risk *monitoring* layer built on 150,000 real US
-> home loans — turning each loan's month-by-month delinquency status into transition
-> matrices, roll rates, IFRS 9 stage movements, an early-warning watchlist, and
-> vintage curves that separate the 2007/08 downturn from the calm 2015 book.
+**In one sentence:** when a bank lends money, the hard part isn't approving the loan — it's
+the years *afterwards*, keeping watch on whether each loan (and the whole loan book) stays
+healthy. This project builds that "keeping watch" system for **150,000 real US home loans**,
+and shows exactly how each piece meets the banking rules that require it.
 
-This is the **monitoring** companion to my mortgage credit-risk model: that project
-*models* the portfolio (PD / LGD / EAD / expected loss); this one *watches it move
-over time*. The strength here is the **monthly panel** — one row per loan per month —
-which is what every transition and migration measure is built from.
-
-On top of the metrics sits a **governance layer** that turns them into a monitoring
-*programme*: a **risk appetite statement** with cascaded **limits** (config-driven),
-a **Board-style RAG dashboard** that scores the book green/amber/red against those
-limits, leading-vs-lagging framing, concentration (HHI + high-LVR), problem-exposure
-(modification) tracking, a stress→limits link, and a model-performance (PSI) layer
-that feeds the sister model's backtest. Framework references trace to APRA APS 220 /
-APG 220 / APS 113 / APS 330 (see [the monitoring pack](outputs/reports/monitoring_pack.md)).
-
-> Demonstrated on real loan-level mortgage data; the monitoring **mechanics** apply
-> equally to any commercial loan portfolio with a monthly status feed.
-> Governance thresholds are **illustrative demo values — not a regulatory submission.**
+> Built on real loan-level mortgage data as a **demonstration** — illustrative, **not a
+> regulatory submission**. The same machinery works for any loan book with a monthly
+> payment feed.
 
 ---
 
-## See it in 30 seconds
+## Read this first (for any reader)
 
-- **The monitoring pack** (all results, one page): [outputs/reports/monitoring_pack.md](outputs/reports/monitoring_pack.md)
-- **Headline visual** — monthly transition heatmap: [outputs/charts/02_bucket_transition_heatmap.png](outputs/charts/02_bucket_transition_heatmap.png)
-- **The standout story** — vintage default curves (downturn vs calm): [outputs/charts/05_vintage_default_curves.png](outputs/charts/05_vintage_default_curves.png)
-- **The engine** — all credit-risk logic in one inspectable file: [src/monitor.py](src/monitor.py)
-- **The governance layer** — risk-appetite limits driving the RAG dashboard: [config/risk_appetite.yaml](config/risk_appetite.yaml)
-- **The build** — ordered notebooks 00→10: [notebooks/](notebooks/)
+A bank's credit work has two halves:
 
----
+1. **Origination** — deciding whether to approve a loan. *(Not this project.)*
+2. **Monitoring** — watching the loans after the money is out the door, to catch trouble
+   early, stay within the limits the Board set, and make sure enough money is set aside for
+   losses. **That second half is what this project does.**
 
-## Key charts
+Regulators don't leave monitoring to chance — they require it to a defined standard. The two
+rulebooks this project maps to:
 
-*All charts are regenerated from the committed result tables in [outputs/tables/](outputs/tables/)
-by [tools/make_figures.py](tools/make_figures.py) — aggregated transition metrics only, no raw loan records.*
+| Rulebook | Plain meaning |
+|---|---|
+| **APRA** (APS/APG 220, 113, 330) | Australia's banking regulator. **APS/APG 220** = credit-risk rules; **APS/APG 113** = extra rules for banks that use their own risk models (the "**IRB**" approach); **APS 330** = the public disclosure rules. |
+| **Basel / IRB** (Basel Committee, "CRE36") | The global framework Australia's rules are built on. **IRB** = *Internal Ratings-Based* — a bank using its own PD/LGD/EAD models, which triggers tougher monitoring and validation duties. |
 
-### 1. Monthly transition matrix (the headline)
-![Heatmap of the monthly delinquency-bucket transition matrix](outputs/charts/transition_matrix_heatmap.png)
-
-**What this shows:** of the loans in each row's state this month, the share in each column's state next month (each row sums to 1).
-**Why it matters:** it is the whole monitor in one picture — the bright diagonal is "stayed put", and you can read straight off it that a 60-days-late loan has a ~38% chance of rolling to 90+ next month.
-
-### 2. Roll rates — deterioration vs cure
-![Roll rates bar chart, deterioration in red and cure in blue](outputs/charts/roll_rates.png)
-
-**What this shows:** the monthly chance of the key worse-bucket moves (red) and recovery moves (blue).
-**Why it matters:** these are the dials an early-warning process tracks — a rising 30→60 roll rate is the first sign a book is turning before defaults show up.
-
-### 3. IFRS 9 stage mix by vintage
-![Stacked bar of IFRS 9 stage 1/2/3 share for the 2007, 2008 and 2015 vintages](outputs/charts/stage_mix_by_vintage.png)
-
-**What this shows:** the share of loan-months in IFRS 9 Stage 1 (performing), Stage 2 (watch) and Stage 3 (default) for each vintage.
-**Why it matters:** the crisis 2007 book carries ~10% of its life in Stage 2/3 versus ~1.5% for calm 2015 — the staging that drives loss provisions, split by cohort.
-
-### 4. Vintage tracking — downturn vs calm
-![Cumulative default by months on book for 2007, 2008 and 2015 vintages](outputs/charts/vintage_default_curves.png)
-
-**What this shows:** cumulative default rate as each cohort ages, on a common "months on book" clock.
-**Why it matters:** the 2007 cohort reaches ~4× the cumulative default of 2015 — the clearest demonstration of why vintage monitoring matters.
-
-### 5. Risk-appetite RAG dashboard (the governance layer)
-![Risk-appetite dashboard: each metric as a percent of its red limit, coloured green/amber/red](outputs/charts/appetite_rag_dashboard.png)
-
-**What this shows:** each appetite metric scored against its amber (early-warning) and red (limit) thresholds from [config/risk_appetite.yaml](config/risk_appetite.yaml), drawn as a share of its red limit.
-**Why it matters:** this is what makes it *monitoring*, not just reporting — a Board reads the colour, not the table. Limits live in config so a risk owner can change appetite without touching the engine (APS 220 para 20/35).
-
-### 6. Model backtest — realised default by grade & vintage
-![Grouped bars of realised cumulative default by credit-score grade for each vintage](outputs/charts/realised_default_by_grade.png)
-
-**What this shows:** realised cumulative default by credit-score grade for each vintage — monotonic in grade, and far higher for the crisis cohorts.
-**Why it matters:** this is the **backtest feed** for the sister PD/LGD/EAD model — realised (this monitor) vs predicted (the model), the framework's model-performance layer (Layer 4).
+So "**how does this align with APRA and IRB?**" means: for each thing the project does, which
+specific rule does it satisfy, and what did it find? That mapping is the whole point of the
+README below.
 
 ---
 
-## For a non-technical reader: what is this, and why does it matter?
+## The 10 jobs of a monitoring programme — what each does, the rule it meets, what it found
 
-Once a bank has lent money, it has to keep *watching* the loans — not just the ones
-already in trouble, but the ones quietly drifting toward it. Good monitoring answers
-three questions every month:
+This is the heart of the project. Each row is one job; the sections after the table show the
+evidence and charts.
 
-| Question | Industry term | Plain meaning |
-|---|---|---|
-| Where did each loan move this month? | **Transition matrix** | the chance of going from one delinquency state to another |
-| How fast are loans deteriorating? | **Roll rate** | the share that rolled to a worse bucket (e.g. 30→60 days late) |
-| Which loans need attention *now*? | **Early-warning watchlist** | the loans freshly deteriorating or in Stage 2/3 |
-
-The whole point of monitoring is that it is **forward-looking**: it flags trouble
-while there is still time to act, and it shows whether a *whole cohort* (a "vintage")
-is going bad faster than it should.
-
----
-
-## What this produces (read from the real outputs)
-
-### 1. Monthly delinquency-bucket transition matrix
-
-Of the loans in each row's state this month, the share in each column's state next
-month. **Each row sums to 1.** The diagonal is "stayed put"; below it is
-deterioration, above it is cure.
-
-| this month → next | Current | 30 | 60 | 90+ | Default | Prepaid |
-|:--|--:|--:|--:|--:|--:|--:|
-| **Current** | 0.975 | 0.0099 | 0.0001 | 0.0001 | 0 | 0.0149 |
-| **30** | 0.3282 | 0.4647 | 0.2054 | 0.0017 | 0 | 0 |
-| **60** | 0.1094 | 0.1428 | 0.3552 | 0.3774 | 0.0002 | 0.0149 |
-| **90+** | 0.0462 | 0.0066 | 0.0131 | 0.9038 | 0.0269 | 0.0034 |
-
-Read it: a *Current* loan stays current 97.5% of months; once a loan is *60 days*
-past due it has a **37.7%** chance of rolling to 90+ next month — the deterioration
-accelerates as loans fall behind. (Full bucket **and** IFRS 9 stage matrices in the
-monitoring pack.)
-
-### 2. IFRS 9 stage movements (the regulator's lens)
-
-Banks report loans in three IFRS 9 stages and care about *movement* between them —
-every 1→2 is a new "significant increase in credit risk" flag, every 2→3 is a new
-default, every 2→1 is a cure.
-
-| move | loan-months | share |
-|:--|--:|--:|
-| 1 → 1  stay performing | 8,124,369 | 91.98% |
-| 3 → 3  stay defaulted | 250,832 | 2.84% |
-| 2 → 2  stay watch | 145,608 | 1.65% |
-| 1 → 2  deteriorate (SICR) | 83,246 | 0.94% |
-| 2 → 1  cure | 63,194 | 0.72% |
-| 2 → 3  deteriorate (default) | 23,073 | 0.26% |
-
-### 3. Vintage tracking — the standout story
-
-Line the cohorts up by **months on book** (not calendar time) and watch how fast each
-goes bad. The 2007/08 cohorts originated straight into the financial crisis; 2015
-originated into a calm market. The curves separate hard:
-
-| months on book | 2007 (crisis) | 2008 (crisis) | 2015 (calm) |
-|--:|--:|--:|--:|
-| 24 | 6.18% | 4.47% | 0.68% |
-| 48 | 12.20% | 7.19% | 1.23% |
-| 72 | **14.64%** | 8.20% | **3.65%** |
-
-The 2007 cohort reaches **~4× the cumulative default** of 2015 — the clearest
-demonstration of why vintage monitoring matters.
-
-![vintage curves](outputs/charts/05_vintage_default_curves.png)
-
----
-
-## The governance layer — from metrics to a monitoring programme
-
-The metrics above tell you *what the book is doing*; the governance layer says
-*what you will tolerate and what you do when a limit is hit*. It maps to APRA's
-APS 220 / APG 220 monitoring expectations:
-
-| Layer | What it adds | Notebook | Rule |
+| # | The job (plain English) | Rule it aligns with | Headline result |
 |---|---|---|---|
-| **Risk appetite + limits** | appetite table — amber/red limit, owner, breach action, review cycle — for each metric; thresholds in [config/risk_appetite.yaml](config/risk_appetite.yaml), not code | `07` | APS 220 para 20/35 |
-| **Board RAG dashboard** | the pack opens with a `metric \| last \| this \| limit \| RAG` dashboard + an actions table for anything amber/red | `10` | APG 220 para 65 |
-| **Leading vs lagging** | every metric labelled; leading-indicator *trends* (SICR, roll rates) tracked over time, not just pooled | `07`/`10` | APG 220 para 66 |
-| **Concentration** | geographic **HHI** + **high-LVR** (original LVR > 90%) concentration, tied to the appetite limits | `06` | APS 220 para 35 |
-| **Problem exposures** | modified/restructured-loan outcomes (cure vs re-default) + a collections-scalability note | `08` | APS 220 para 79 |
-| **Model performance** | **PSI** of the score distribution across vintages + realised-default-by-grade backtest feed to the sister model | `09` | 5-layer model, Layer 4 |
-| **Stress → limits** | a downturn multiple (this repo's own crisis severity) re-tests the metrics against their limits | `07`/`10` | APS 220 para 73 |
+| 1 | **Track how loans move** — are loans getting better or worse, and how fast? | APS 220 ¶28/30; APG 220 ¶64 | A healthy loan stays healthy **97.5%** of months; a 60‑day‑late loan has a **38%** chance of going 90+ next month |
+| 2 | **Spot trouble early** — which loans need attention *now*? | APS 220 ¶33; APG 220 ¶63/66 | A **352‑loan watchlist**, each loan tagged with *why* it was flagged and *who* must act in *what* timeframe |
+| 3 | **Track each year's lending ("vintage")** — is a whole cohort going bad faster than it should? | APG 220 ¶67(c) | The **2007** crisis cohort defaulted at **~4×** the calm **2015** cohort |
+| 4 | **Watch concentration** — are we over‑exposed to one place, product or channel? | APS 220 ¶35/39; Basel CRE36.140 | Broker/third‑party loans defaulted at **~2×** the retail rate; top state (CA) is **17%** of the book |
+| 5 | **Set & police limits** — are we within what the Board agreed, and how close to the line? | APS 220 ¶20/35; APG 220 ¶65 | All **10** appetite metrics **GREEN**, with the headroom to each limit shown |
+| 6 | **Provisions** — have we set aside enough money for losses? | APG 220 ¶67(b) | Expected loss **~39 bps** of the book; **46%** of bad‑loan exposure covered by provisions |
+| 7 | **Handle problem loans** — are our fixes working, and could we cope in a surge? | APS 220 ¶79; APG 220 ¶68 | Restructured **2015** loans recover **57%** of the time; **2007** only **44%**, and **10%** end in a write‑off |
+| 8 | **Stress test** — what happens in a downturn? | APS 220 ¶73/76 | A severe (GFC‑like) downturn pushes the loss rate and roll rates into **RED** |
+| 9 | **Check the watchers** — is the monitoring itself reliable and independent? | APS 113 / APG 113 ¶140; Basel CRE36.57 | The early‑warning flag is **predictive**: flagged loans default **60%** vs **7%** for unflagged |
+| 10 | **Feed public disclosure** — what goes into the Pillar 3 report? | APS 330 | Concentration & asset‑quality tables produced in disclosure format |
 
-> All thresholds are **illustrative demo values**, set to plausible mortgage levels —
-> not fitted to this crisis+calm sample, and **not a regulatory submission**.
-
-## Key definitions (stated precisely)
-
-- **Delinquency bucket** — from the monthly delinquency status: Current (0 days past
-  due) / 30 / 60 / 90+ / Default (a credit-event termination or REO) / Prepaid (paid
-  off or matured).
-- **IFRS 9 staging (backstop triggers, stated exactly):** Stage 1 = performing
-  (Current); **Stage 2** = significant increase in credit risk, 30+ days-past-due
-  backstop (30 or 60 bucket); **Stage 3** = credit-impaired / default (90+ DPD, or a
-  credit-event zero-balance code).
-- **Transition matrix** — period-over-period migration probabilities; periodicity =
-  **one calendar month**; rows sum to 1.
-- **Roll rate** — the share of a worse-bucket move (30→60, 60→90+). **Cure rate** —
-  the share that improves (30→Current).
-- **Vintage** — origination-year cohort. **Months on book** — loan age since first
-  payment; puts every vintage on a common clock.
+> Everything is computed from the real data and assembled into one **[Board-style
+> monitoring pack](outputs/reports/monitoring_pack.md)** — the single best file to read next.
 
 ---
 
-## Data source & provenance
+## The results, walked through
 
-Uses the Freddie Mac **Single-Family Loan-Level Dataset (SFLLD)**, a public US
-mortgage dataset — sample files for the **2007 / 2008 / 2015** vintages, 50,000 loans
-each. The **monthly performance (servicing) file** is the key input: one row per loan
-per month, carrying the delinquency status that everything here is built from.
+### Job 1 — How are loans moving? (the headline)
 
-- Source: https://freddiemac.com/research/datasets/sf-loanlevel-dataset
-- The pipe-delimited files have **no column headers**; the official SFLLD layout is
-  applied by position in [src/monitor.py](src/monitor.py).
-- **Compliance:** Freddie Mac redistribution is restricted, so the raw data and the
-  derived loan-level panel are **gitignored and never committed**. Only aggregated
-  output snapshots, charts, and the report are in the repo; watchlist loan IDs are
-  **masked** to the last 4 characters.
+The core of monitoring is a **transition matrix**: of the loans in each state this month, what
+share are in each state next month? Read one row across — it always sums to 100%.
+
+![Monthly transition matrix heatmap](outputs/charts/transition_matrix_heatmap.png)
+
+- A **Current** (up‑to‑date) loan stays current **97.5%** of months — most of the book is calm.
+- But deterioration **accelerates** once a loan slips: a **60‑day‑late** loan has a **38%**
+  chance of rolling to 90+ the very next month.
+
+The **roll rates** below pull out those key "getting worse" (red) vs "recovering" (blue) moves —
+the dials an early-warning team watches, because they move *before* defaults show up.
+
+![Roll rates: deterioration vs cure](outputs/charts/roll_rates.png)
+
+*Aligns with: APS 220 ¶28/30 and APG 220 ¶64 — monitor credit risk at the individual **and**
+portfolio level.*
+
+### Job 2 — Which loans need attention now?
+
+The monitor produces a **watchlist** of **352 loans** that are either freshly deteriorating or
+already on watch / in default. Crucially, each loan carries a **trigger** (why it's on the list)
+that maps to an **action, an owner, and a deadline** — a real workflow, not a flat list:
+
+| Trigger | Loans | Action → owner → timeframe |
+|---|--:|---|
+| Stage 2 — on watch | 132 | Increase monitoring → Credit Risk Analyst → 30 days |
+| SICR — just entered watch (30+ days late) | 119 | Lender's review → Credit Risk Analyst → 30 days |
+| Stage 3 — default / credit-impaired | 101 | NPL workout + provision → Workout team → immediate |
+
+*Aligns with: APS 220 ¶33 (early identification of problem exposures) and APG 220 ¶63/66 (a
+timely-response process, using forward-looking indicators not just arrears).*
+
+### Job 3 — Is a whole year's lending going bad? (the standout story)
+
+Line each origination year up by **months since the loan started** (not calendar date) and watch
+how fast each cohort goes bad. The 2007/08 loans were written straight into the financial
+crisis; 2015 into calm markets. The curves separate hard:
+
+![Vintage default curves — downturn vs calm](outputs/charts/vintage_default_curves.png)
+
+| Months on book | 2007 (crisis) | 2008 (crisis) | 2015 (calm) |
+|--:|--:|--:|--:|
+| 24 | 6.2% | 4.5% | 0.7% |
+| 48 | 12.2% | 7.2% | 1.2% |
+| 72 | **14.6%** | 8.2% | **3.7%** |
+
+The 2007 cohort reaches **~4× the cumulative default** of 2015 — the clearest possible
+demonstration of why you track lending year-by-year. The same split shows in the **IFRS 9 stage
+mix** (the regulator's performing / watch / defaulted buckets): the crisis book spends far more
+of its life in the watch/default stages.
+
+![IFRS 9 stage mix by vintage](outputs/charts/stage_mix_by_vintage.png)
+
+*Aligns with: APG 220 ¶67(c) — track credit migration across the portfolio.*
+
+### Job 4 — Are we over-exposed to any one thing?
+
+Concentration is a risk in its own right — a single shock hurts more if the book is bunched up.
+The monitor checks it five ways:
+
+- **Geography** — top state (California) is **17%** of exposure; the diversification score (HHI)
+  is "Low".
+- **Product** — **investor** loans are **8.5%** of the book, **cash-out refinances** 23%
+  (both higher-risk products that regulators expect watched separately).
+- **Acquisition channel** — and the standout finding: loans bought through **brokers /
+  third parties** went bad at **up to 17.5%** lifetime, versus **7.9%** for the bank's own
+  **retail** channel. That ~2× gap is exactly the third-party risk APRA wants surfaced.
+- **Collateral (current LVR)** — re-valuing each property to today's prices shows the surviving
+  book has **deleveraged** (almost all now below 60% loan-to-value), because house prices rose
+  after 2015. Origination LVR alone would have hidden that.
+- **Single borrowers** — the top 50 loans are just **1.5%** of the book (immaterial for a
+  retail pool, but checked and reported).
+
+*Aligns with: APS 220 ¶35 (concentration & higher-risk products), ¶39 (third-party originators),
+and Basel CRE36.140 (continuous collateral monitoring).*
+
+### Job 5 — Are we within the Board's limits?
+
+Monitoring without limits is just reporting. The project carries a **risk appetite statement**:
+for each metric, an **amber** (early-warning / "appetite") level and a **red** (hard limit /
+"tolerance") level, plus who owns it and what they do if it's breached. The Board reads the
+**colour**, not the table:
+
+![Risk-appetite RAG dashboard](outputs/charts/appetite_rag_dashboard.png)
+
+All **10** metrics are currently **GREEN**, each well inside its limit. (They're green because
+today's book is dominated by the *surviving* calm-2015 loans — the crisis severity deliberately
+shows up in the vintage, stress and backtest sections instead.) The limits live in a plain
+config file, so a risk owner can change appetite without touching any code.
+
+*Aligns with: APS 220 ¶20 (appetite vs tolerance) & ¶35 (limits); APG 220 ¶65 (management
+information / Board dashboard).*
+
+### Job 6 — Have we set aside enough for losses?
+
+From the loan stages and standard loss rates, the monitor estimates the **provision** the bank
+should hold:
+
+- **Expected loss ≈ 39 basis points** (0.39%) of the ~$1.7 billion still owed.
+- **Provision coverage ≈ 46%** of the defaulted exposure — i.e. nearly half of the bad-loan
+  balance is already provided for.
+
+*Aligns with: APG 220 ¶67(b) — provision coverage is a required forward-looking indicator.*
+
+### Job 7 — Are our fixes working, and could we cope in a crisis?
+
+When a borrower struggles, the bank can **restructure** the loan (a "modification" or
+"hardship" arrangement). The only question that matters: did it **cure** or **re-default**?
+
+| Vintage | Restructured loans | Cured | Re-defaulted | Ended in write-off |
+|--:|--:|--:|--:|--:|
+| 2007 (crisis) | 3,079 | 44% | 51% | 9.8% |
+| 2015 (calm) | 463 | **57%** | 33% | **0.2%** |
+
+Calm-market restructures stick far better than crisis ones. The monitor also checks
+**collections capacity** — in the crisis, arrears surged to ~3× normal, which is the workload the
+collections team must be able to absorb.
+
+*Aligns with: APS 220 ¶79 (early remedial action, collections scalability) and APG 220 ¶68
+(hardship cure/loss tracking).*
+
+### Job 8 — What happens in a downturn?
+
+The monitor re-tests every metric under two graded **stress scenarios**. A severe, GFC-like
+downturn flips several from GREEN straight to **RED** — the expected-loss rate and both roll
+rates breach their limits — which is exactly the early warning a Board needs *before* a downturn
+arrives, so limits and lending can be tightened in time.
+
+*Aligns with: APS 220 ¶73 (stress feeds limits) & ¶76 (stress models must be validated).*
+
+### Job 9 — Is the monitoring itself any good?
+
+A monitoring metric is only worth having if it actually **predicts** trouble. The project proves
+its main early-warning flag works: loans that hit the "watch" stage within their first year went
+on to default **59.6%** of the time, versus just **6.8%** for loans that didn't — an **~8.8×**
+difference. It also tracks whether the borrower population has **drifted** from what the risk
+models were built on (the 2007 borrowers' credit-score mix shifted "moderately" from 2015's),
+which is the trigger to refresh those models.
+
+The grade backtest below shows the monitor's realised defaults line up sensibly with credit
+quality — worse grades default more, and the crisis cohorts default more at every grade:
+
+![Realised default by credit-score grade and vintage](outputs/charts/realised_default_by_grade.png)
+
+*Aligns with: APS 113 / APG 113 ¶140 (8-element validation of the framework); Basel CRE36.57
+(an independent control unit) — see [docs/validation.md](docs/validation.md) and
+[docs/governance.md](docs/governance.md).*
+
+### Job 10 — Feeding public disclosure
+
+The concentration and asset-quality outputs are laid out in the format that feeds a bank's
+public **Pillar 3** disclosure (APS 330) — format only, illustrative.
 
 ---
 
-## Repo structure
+## Where the IRB (internal-models) rules come in specifically
+
+"IRB" is the regime for banks that use their own PD/LGD/EAD models — it carries extra monitoring
+duties. This project touches them at these points:
+
+| IRB / Basel duty | Rule | Where in this project |
+|---|---|---|
+| Validate the framework (8 elements) | APG 113 ¶140 | [docs/validation.md](docs/validation.md) + the predictiveness test (Job 9) |
+| Monitor model population drift | Layer 4 | PSI in notebook 09 |
+| Independent monitoring unit (separate from sales) | Basel CRE36.57 | Owners reassigned to 2nd-line; [docs/governance.md](docs/governance.md) |
+| Daily monitoring of facility amounts/limits | APS 113 Att.D ¶6; CRE36.92 | Limit-utilisation view (monthly analog) + daily layer documented |
+| Continuous collateral monitoring | Basel CRE36.140 | Current/indexed LVR (Job 4) |
+| Annual rating refresh | Basel CRE36.41 | PSI breach → refresh trigger, documented |
+
+The sister project does the actual IRB **modelling** (PD/LGD/EAD); this project does the
+**monitoring** that sits around those models. A full gap-by-gap compliance map is in
+**[docs/compliance_gap_review.md](docs/compliance_gap_review.md)**.
+
+---
+
+## Honest limitations
+
+- A **demonstration**, not a production or regulatory-capital system. Disclosure-style tables are
+  **format only**.
+- **US** agency mortgages (Freddie Mac data), used to illustrate mechanics that apply to an
+  Australian/APRA book — it is not itself an APRA portfolio.
+- Risk-appetite limits, ECL coverage rates, the house-price index used for current-LVR, and the
+  stress multipliers are **illustrative demo values**, not fitted to this sample.
+- The current "live book" is mostly *survivors* of the calm 2015 vintage, so the dashboard reads
+  all-green; crisis severity shows in the vintage, stress and backtest views by design.
+
+---
+
+## How it's built (for a technical reader)
+
+Plain Python, fully reproducible. One engine file holds all the credit logic; ordered notebooks
+read a cached month-by-month loan table and write the result tables, charts, and the Board pack.
 
 ```
-.
-├── raw data/              # SFLLD files (2007/2008/2015) — GITIGNORED, never committed
-├── data/processed/        # cached loan-month panel — GITIGNORED, rebuilt by nb 00-01
-├── config/
-│   └── risk_appetite.yaml # appetite limits (amber/red), owners, breach actions — drives the RAG dashboard
-├── notebooks/             # ordered build 00–10
-│   ├── 00_load_and_assemble        # join orig + monthly perf; derive bucket & stage; data quality
-│   ├── 01_loan_month_panel         # the base table: one row per loan per month (+ next-month state)
-│   ├── 02_transition_matrices_roll_rates   # bucket + IFRS 9 matrices, roll rates, heatmap
-│   ├── 03_ifrs9_stage_movements    # period-over-period stage classification + movement summary
-│   ├── 04_early_warning_watchlist  # flag deteriorating loans; watchlist table
-│   ├── 05_vintage_tracking         # cumulative default by months on book + curve chart
-│   ├── 06_concentration_report     # concentration by state/vintage + HHI + high-LVR bands
-│   ├── 07_risk_appetite_limits     # appetite table, RAG status, leading-indicator trends, stress→limits
-│   ├── 08_problem_exposures        # modified/restructured exposure outcomes + collections scalability
-│   ├── 09_model_performance_psi    # PSI across vintages + realised-default-by-grade backtest feed
-│   └── 10_monitoring_pack          # assembles the Board-style pack (RAG dashboard first)
-├── outputs/
-│   ├── tables/            # CSV result snapshots (committed)
-│   ├── charts/            # heatmap + vintage curves (committed)
-│   └── reports/           # monitoring_pack.md (committed)
-├── src/monitor.py         # the engine: loaders, bucket/stage logic, transitions, roll rates, governance layer
-├── tools/make_figures.py  # regenerates README charts into outputs/charts/
-├── tools/make_notebooks.py # regenerates the notebooks
-├── requirements.txt
-└── .gitignore
+config/risk_appetite.yaml   # the limits, appetite/tolerance, ECL rates, stress scenarios, workflow
+src/monitor.py              # the engine: all loaders, bucket/stage logic, and the metric functions
+notebooks/00 → 10           # the ordered build (load → metrics → governance → final pack)
+outputs/tables/             # committed result snapshots (aggregated only — no raw loan records)
+outputs/charts/             # the figures in this README
+outputs/reports/monitoring_pack.md   # the assembled Board-style pack
+docs/                       # compliance_gap_review.md · governance.md · validation.md
 ```
-
-## How to run
 
 ```bash
 pip install -r requirements.txt
-# Place the SFLLD samples under "raw data/sample_2007/", ".../sample_2008/",
-# ".../sample_2015/" (each with sample_orig_YYYY.txt and sample_svcg_YYYY.txt).
-python tools/make_notebooks.py     # (re)generate the notebooks
+# Place the Freddie Mac SFLLD samples under "raw data/sample_2007/" etc.
+python tools/make_notebooks.py                                  # generate the notebooks
 jupyter nbconvert --to notebook --execute --inplace notebooks/*.ipynb
-python tools/make_figures.py     # (re)generate README charts from the committed tables
+python tools/make_figures.py                                    # regenerate the README charts
 ```
-Notebooks 00–01 assemble and cache the loan-month panel once; 02–10 read the cached
-panel and run in seconds, writing tables to `outputs/tables/`, charts to
-`outputs/charts/`, and the Board-style pack to `outputs/reports/monitoring_pack.md`.
-The governance layer (07–10) reads its limits from `config/risk_appetite.yaml`.
 
-## Relationship to the mortgage credit-risk model
+**Data & provenance:** Freddie Mac **Single-Family Loan-Level Dataset** (public), 2007 / 2008 /
+2015 vintages, 50,000 loans each. Redistribution is restricted, so the raw data and the derived
+loan-level table are **gitignored and never committed** — only aggregated outputs are in the repo,
+and watchlist loan IDs are masked. Source:
+<https://freddiemac.com/research/datasets/sf-loanlevel-dataset>.
 
-These are the **same loans** modelled in my mortgage credit-risk project — the natural
-pairing is **model the portfolio → monitor it over time**:
+## Relationship to the credit-risk model
 
-- **Model it:** [mortgage-credit-risk-pd-lgd-ead](https://github.com/Jane511/mortgage-credit-risk-pd-lgd-ead)
-  — PD + LGD + EAD + expected loss + stress testing on the same Freddie Mac data.
-- **Monitor it (this repo):** the monthly transition/migration layer the modelling
-  project doesn't cover.
-
-The 2007 cohort's downturn severity shows up in both: ~13.7% default in the modelling
-project, and the steepest vintage curve here.
-
-## Limitations
-
-- Portfolio **monitoring demonstration**, not a production or regulatory-capital
-  system. Any APS 330-style table is **format only — illustrative, not a regulatory
-  submission.**
-- US agency mortgages — not an Australian / APRA portfolio.
-- Sample data (50k loans/vintage); illustrative, empirical (not model-fitted)
-  transition probabilities.
-- Transitions are pooled across vintages for the headline matrix; per-vintage and
-  macro-conditioned matrices are a natural extension.
+These are the **same loans** as my [mortgage-credit-risk-pd-lgd-ead](https://github.com/Jane511/mortgage-credit-risk-pd-lgd-ead)
+project. The natural pairing: **that project models the portfolio (PD/LGD/EAD); this one monitors
+it over time.** The 2007 cohort's severity shows in both — ~13.7% modelled default there, the
+steepest vintage curve here.
 
 ## License
 
-Released under the MIT License — free to read, run, and reuse with attribution.
+MIT — free to read, run, and reuse with attribution.
